@@ -64,14 +64,14 @@ object CoreJobRunner {
       sparkConf.set("spark.executor.memory", config.executorMemory)
       sparkConf.set("spark.logConf", "true")
       sparkConf.set("spark.executor.extraJavaOptions", "-Djava.io.tmpdir=/mnt -verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps -XX:-UseGCOverheadLimit")
-      sparkConf.set("spark.speculation", "true")
+      //sparkConf.set("spark.speculation", "true")
       sparkConf.set("spark.akka.frameSize", "500")
       sparkConf.set("spark.files.userClassPathFirst", "true")
 //
       sparkConf.set("spark.default.parallelism", "1600")
       sparkConf.set("spark.shuffle.memoryFraction", "0.2")
       sparkConf.set("spark.storage.memoryFraction", "0.3")
-      sparkConf.set("spark.reducer.maxMbInFlight", "15")
+      //sparkConf.set("spark.reducer.maxMbInFlight", "15")
       sparkConf.set("spark.hadoop.validateOutputSpecs", "true")
       //sparkConf.set("spark.storage.blockManagerSlaveTimeoutMs", "120000")
 //      sparkConf.set("spark.eventLog.enabled", "true") // not supported on 1.0.2
