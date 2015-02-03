@@ -46,7 +46,7 @@ default_key_file = os.path.expanduser('~/.ssh/ignition_key.pem')
 default_ami = 'ami-35b1885c'  # HVM AMI
 default_master_ami = 'ami-5bb18832'  # PVM AMI
 default_env = 'dev'
-default_spark_version = '4877_user_first_parent_inheritance' # stephenh/4877_user_first_parent_inheritance
+default_spark_version = 'classpath-fix'
 default_remote_user = 'ec2-user'
 default_remote_control_dir = '/tmp/Ignition'
 default_collect_results_dir = '/tmp'
@@ -201,7 +201,7 @@ def launch(cluster_name, slaves,
            user_data=default_user_data,
            security_group = None,
            master_instance_type=default_master_instance_type,
-           wait_time='180', hadoop_major_version='1',
+           wait_time='180', hadoop_major_version='2',
            worker_instances=default_worker_instances, retries_on_same_cluster=5,
            max_clusters_to_create=5,
            minimum_percentage_healthy_slaves=0.9,
@@ -251,7 +251,7 @@ def launch(cluster_name, slaves,
                                  '--wait', wait_time,
                                  '--hadoop-major-version', hadoop_major_version,
                                  '--worker-instances', worker_instances,
-                                 '--spark-git-repo', 'https://github.com/stephenh/spark',
+                                 '--spark-git-repo', 'https://github.com/fparisotto/spark',
                                  '--master-opts', '-Dspark.worker.timeout={0}'.format(worker_timeout),
                                  '-v', spark_version,
                                  '--user-data', user_data,
