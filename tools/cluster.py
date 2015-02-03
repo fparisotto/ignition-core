@@ -46,7 +46,7 @@ default_key_file = os.path.expanduser('~/.ssh/ignition_key.pem')
 default_ami = 'ami-35b1885c'  # HVM AMI
 default_master_ami = 'ami-5bb18832'  # PVM AMI
 default_env = 'dev'
-default_spark_version = 'classpath-fix'
+default_spark_version = '1.0.2' #'classpath-fix'
 default_remote_user = 'ec2-user'
 default_remote_control_dir = '/tmp/Ignition'
 default_collect_results_dir = '/tmp'
@@ -199,7 +199,7 @@ def launch(cluster_name, slaves,
            zone=default_zone, instance_type=default_instance_type,
            ondemand=False, spot_price=default_spot_price,
            user_data=default_user_data,
-           security_group = None,
+           security_group = 'mail-spark-cluster-test',
            master_instance_type=default_master_instance_type,
            wait_time='180', hadoop_major_version='2',
            worker_instances=default_worker_instances, retries_on_same_cluster=5,
