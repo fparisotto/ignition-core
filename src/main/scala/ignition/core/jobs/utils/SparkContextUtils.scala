@@ -2,6 +2,7 @@ package ignition.core.jobs.utils
 
 import java.util.Date
 
+import ignition.core.utils.ByteUtils
 import org.apache.hadoop.io.LongWritable
 import org.apache.spark.SparkContext
 import org.apache.hadoop.fs.{FileStatus, Path, FileSystem}
@@ -153,9 +154,9 @@ object SparkContextUtils {
         processTextFiles(paths, minimumPaths)
     }
 
-    private def stringHadoopFile(paths: Seq[String], minimumPaths: Int): RDD[String] = {
+    private def stringHadoopFile(paths: Seq[String], minimumPaths: Int): RDD[Try[String]] = {
       processPaths((p) => sc.sequenceFile(p, classOf[LongWritable], classOf[org.apache.hadoop.io.BytesWritable])
-                .map({ case (k, v) => new String(v.getBytes, 0, v.getLength) }), paths, minimumPaths)
+                .map({ case (k, v) => Try { ByteUtils.toString(v.getBytes, 0, v.getLength, "UTF-8") } }), paths, minimumPaths)
     }
 
     def filterAndGetStringHadoopFiles(path: String,
@@ -165,15 +166,11 @@ object SparkContextUtils {
                                       inclusiveEndDate: Boolean = true,
                                       endDate: Option[DateTime] = None,
                                       lastN: Option[Int] = None,
-                                      synchLocally: Boolean = false,
-                                      forceSynch: Boolean = false,
                                       ignoreMalformedDates: Boolean = false,
-                                      minimumPaths: Int = 1): RDD[String] = {
+                                      minimumPaths: Int = 1): RDD[Try[String]] = {
       val paths = getFilteredPaths(path, requireSuccess, inclusiveStartDate, startDate, inclusiveEndDate, endDate, lastN, ignoreMalformedDates)
       if (paths.size < minimumPaths)
         throw new Exception(s"Tried with start/end time equals to $startDate/$endDate for path $path but but the resulting number of paths $paths is less than the required")
-      else if (synchLocally) // we save locally as text file, so read as text files
-        processTextFiles(synchToHdfs(paths, stringHadoopFile, forceSynch), minimumPaths)
       else
         stringHadoopFile(paths, minimumPaths)
     }
