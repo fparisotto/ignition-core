@@ -22,7 +22,7 @@ libraryDependencies ++= Seq()
 
 libraryDependencies += ("org.apache.spark" %% "spark-core" % "1.2.0" % "provided").exclude("org.apache.hadoop", "hadoop-client")
 
-libraryDependencies += ("org.apache.hadoop" % "hadoop-client" % "1.0.4" % "provided")
+libraryDependencies += ("org.apache.hadoop" % "hadoop-client" % "2.5.0" % "provided")
 
 libraryDependencies += "com.github.nscala-time" %% "nscala-time" % "0.8.0"
 
