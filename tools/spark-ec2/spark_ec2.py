@@ -261,6 +261,10 @@ def parse_args():
         help="If specified, launch slaves as spot instances with the given " +
              "maximum price (in dollars)")
     parser.add_option(
+        "--master-spot", action="store_true", default=False,
+        help="If specified, launch master as spot instance using the same " +
+             "bid and instance type of the slave ones")
+    parser.add_option(
         "--ganglia", action="store_true", default=True,
         help="Setup Ganglia monitoring on cluster (default: %default). NOTE: " +
              "the Ganglia page will be publicly accessible")
@@ -729,26 +733,83 @@ def launch_cluster(conn, opts, cluster_name):
         master_nodes = existing_masters
     else:
         master_type = opts.master_instance_type
-        if master_type == "":
+        if master_type == "" or opts.master_spot:
             master_type = opts.instance_type
         if opts.zone == 'all':
             opts.zone = random.choice(conn.get_all_zones()).name
-        master_res = master_image.run(
-            key_name=opts.key_pair,
-            security_group_ids=[master_group.id] + additional_group_ids,
-            instance_type=master_type,
-            placement=opts.zone,
-            min_count=1,
-            max_count=1,
-            block_device_map=block_map,
-            subnet_id=opts.subnet_id,
-            placement_group=opts.placement_group,
-            user_data=user_data_content,
-            instance_initiated_shutdown_behavior=opts.instance_initiated_shutdown_behavior,
-            instance_profile_name=opts.instance_profile_name)
+        if opts.master_spot:
+            # Launch spot master instance with the requested price
+            # Note: The spot_price*1.5 is present to ensure a higher bid price to
+            #       the master spot instance, so the master instance will be the
+            #       last one to be terminated in a spot market price increase
+            print("Requesting master as spot instance with price $%.3f" %
+                (opts.spot_price))
+            master_req = conn.request_spot_instances(
+                price=(opts.spot_price * 1.5),
+                image_id=opts.master_ami,
+                placement=opts.zone,
+                count=1,
+                key_name=opts.key_pair,
+                security_group_ids=[master_group.id] + additional_group_ids,
+                instance_type=master_type,
+                block_device_map=block_map,
+                subnet_id=opts.subnet_id,
+                placement_group=opts.placement_group,
+                user_data=user_data_content,
+                instance_profile_name=opts.instance_profile_name)
+            my_master_req_id = [req.id for req in master_req]
 
-        master_nodes = master_res.instances
-        print("Launched master in %s, regid = %s" % (zone, master_res.id))
+            start_time = datetime.now()
+            print("Waiting for master spot instance to be granted... Request ID: %s " % my_master_req_id)
+            try:
+                while True:
+                    time.sleep(10)
+                    reqs = conn.get_all_spot_instance_requests(my_master_req_id)
+                    active_instance_ids = filter(lambda req: req.state == "active", reqs)
+                    invalid_states = ["capacity-not-available", "capacity-oversubscribed", "price-too-low"]
+                    invalid = filter(lambda req: req.status.code in invalid_states, reqs)
+                    if len(invalid) > 0:
+                        raise Exception("Invalid state for spot request: %s - status: %s" %
+                            (invalid[0].id, invalid[0].status.message))
+                    if len(active_instance_ids) == 1:
+                        print("Master spot instance granted")
+                        master_res = conn.get_all_reservations([r.instance_id for r in active_instance_ids])
+                        master_nodes = master_res[0].instances
+                        break
+                    else:
+                        print("Master spot instance not granted yet, waiting longer")
+
+                    if (datetime.now() - start_time).seconds > opts.spot_timeout * 60:
+                        raise Exception("Timed out while waiting for master spot instance")
+            except:
+                print("Error: %s" % sys.exc_info()[1])
+                print("Canceling master spot instance requests")
+                conn.cancel_spot_instance_requests(my_master_req_id)
+                # Log a warning if any of these requests actually launched instances:
+                (master_nodes, slave_nodes) = get_existing_cluster(
+                    conn, opts, cluster_name, die_on_error=False)
+                running = len(master_nodes) + len(slave_nodes)
+                if running:
+                    print(("WARNING: %d instances are still running" % running), file=stderr)
+                sys.exit(0)
+        else:
+            # Launch ondemand instance
+            master_res = master_image.run(
+                key_name=opts.key_pair,
+                security_group_ids=[master_group.id] + additional_group_ids,
+                instance_type=master_type,
+                placement=opts.zone,
+                min_count=1,
+                max_count=1,
+                block_device_map=block_map,
+                subnet_id=opts.subnet_id,
+                placement_group=opts.placement_group,
+                user_data=user_data_content,
+                instance_initiated_shutdown_behavior=opts.instance_initiated_shutdown_behavior,
+                instance_profile_name=opts.instance_profile_name)
+
+            master_nodes = master_res.instances
+            print("Launched master in %s, regid = %s" % (zone, master_res.id))
 
     # This wait time corresponds to SPARK-4983
     print("Waiting for AWS to propagate instance metadata...")
