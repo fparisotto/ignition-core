@@ -4,13 +4,13 @@ object IntBag {
   def from(numbers: TraversableOnce[Long]): IntBag = {
     val histogram = scala.collection.mutable.HashMap.empty[Long, Long]
     numbers.foreach(n => histogram += (n -> (histogram.getOrElse(n, 0L) + 1)))
-    new IntBag(histogram)
+    IntBag(histogram)
   }
 
   val empty = from(Seq.empty)
 }
 
-class IntBag(val histogram: collection.Map[Long, Long]) {
+case class IntBag(histogram: collection.Map[Long, Long]) {
   def ++(other: IntBag): IntBag = {
     val newHistogram = scala.collection.mutable.HashMap.empty[Long, Long]
     (histogram.keySet ++ other.histogram.keySet).foreach(k => newHistogram += (k -> (histogram.getOrElse(k, 0L) + other.histogram.getOrElse(k, 0L))))
