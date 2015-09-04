@@ -20,6 +20,9 @@ object DateUtils {
 
     def isEqualOrBefore(other: DateTime) =
       dateTime.isBefore(other) || dateTime.saneEqual(other)
+
+    def isBetween(start: DateTime, end: DateTime) =
+      dateTime.isAfter(start) && dateTime.isEqualOrBefore(end)
   }
 
   implicit class SecondsImprovements(val seconds: Seconds) {
