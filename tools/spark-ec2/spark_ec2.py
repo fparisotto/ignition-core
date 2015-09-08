@@ -759,6 +759,7 @@ def launch_cluster(conn, opts, cluster_name):
                 instance_profile_name=opts.instance_profile_name)
             my_master_req_id = [req.id for req in master_req]
 
+            # TODO: refactor duplicated spot waiting code
             start_time = datetime.now()
             print("Waiting for master spot instance to be granted... Request ID: %s " % my_master_req_id)
             try:
