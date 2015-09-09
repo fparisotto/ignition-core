@@ -1,20 +1,25 @@
 package ignition.core.jobs.utils
 
-import java.util.Date
-
 import ignition.core.utils.ByteUtils
+import ignition.core.utils.CollectionUtils._
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.io.LongWritable
-import org.apache.spark.SparkContext
+import org.apache.hadoop.io.compress.CompressionCodecFactory
+import org.apache.spark.{Partitioner, SparkContext}
 import org.apache.hadoop.fs.{FileStatus, Path, FileSystem}
 import org.apache.spark.rdd.{UnionRDD, RDD}
-import org.joda.time.{DateTimeZone, DateTime}
+import org.joda.time.DateTime
 import ignition.core.utils.DateUtils._
 
+import scala.collection.mutable.ArrayBuffer
+import scala.io.Source
 import scala.reflect.ClassTag
 import scala.util.Try
 
-
 object SparkContextUtils {
+
+  case class Bucket(var size: Long, paths: ArrayBuffer[String])
+  case class S3File(path: String, isDir: Boolean, size: Long)
 
   implicit class SparkContextImprovements(sc: SparkContext) {
 
@@ -194,5 +199,102 @@ object SparkContextUtils {
       else
         objectHadoopFile(paths, minimumPaths)
     }
+
+    def parallelTextFiles(paths: Seq[String], maxBytesPerPartition: Long): RDD[String] = {
+      val s3Paths = parallelListFiles(paths)
+      val buckets = buildBuckets(s3Paths, maxBytesPerPartition)
+      val files = buckets.flatMap(_.paths)
+
+      val s3Key = sc.hadoopConfiguration.get("fs.s3n.awsAccessKeyId")
+      val s3Secret = sc.hadoopConfiguration.get("fs.s3n.awsSecretAccessKey")
+
+      val partitionedFiles = sc.parallelize(files).map(file => file -> ()).partitionBy(createPartitioner(buckets))
+
+      partitionedFiles.mapPartitions { files =>
+        val conf = new Configuration()
+        conf.set("fs.s3n.awsAccessKeyId", s3Key)
+        conf.set("fs.s3n.awsSecretAccessKey", s3Secret)
+        val codecFactory = new CompressionCodecFactory(conf)
+        files.map { case (path, _) => path } flatMap { s3Path =>
+          val fileSystem = FileSystem.get(new java.net.URI(s3Path), conf)
+          val path = new Path(s3Path)
+          val inputStream = Option(codecFactory.getCodec(path)) match {
+            case Some(compression) => compression.createInputStream(fileSystem.open(path))
+            case None => fileSystem.open(path)
+          }
+          Source.fromInputStream(inputStream).getLines()
+        }
+      }
+    }
+
+    private def createPartitioner(buckets: Seq[Bucket]): Partitioner = {
+      val size = buckets.size
+      val partitions: Map[Any, Int] = buckets.zipWithIndex.flatMap { case (bucket, index) => bucket.paths.map(path => path -> index) }.toMap
+      new Partitioner {
+        override def numPartitions: Int = size
+        override def getPartition(key: Any): Int = partitions(key)
+      }
+    }
+
+    private def buildBuckets(files: Seq[S3File], maxBytesPerPartition: Long): Seq[Bucket] = {
+      val buckets = ArrayBuffer.empty[Bucket]
+      files.distinctBy(_.path).foreach { file =>
+        val size = file.size
+        val bucket = buckets.find(bucket => bucket.size + size < maxBytesPerPartition) match {
+          case Some(bucketFound) => bucketFound
+          case None =>
+            val newBucket = Bucket(0, ArrayBuffer.empty)
+            buckets += newBucket
+            newBucket
+        }
+        bucket.size += size
+        bucket.paths += file.path
+      }
+      buckets
+    }
+
+    def parallelListFiles(paths: Seq[String]): Seq[S3File] = {
+      val s3Key = sc.hadoopConfiguration.get("fs.s3n.awsAccessKeyId")
+      val s3Secret = sc.hadoopConfiguration.get("fs.s3n.awsSecretAccessKey")
+
+      val remainingDirectories = new scala.collection.mutable.ArrayBuffer[S3File]
+      remainingDirectories ++= paths.map(S3File(_, isDir = true, 0))
+      val allFiles = new scala.collection.mutable.ArrayBuffer[S3File]
+
+      while (remainingDirectories.nonEmpty) {
+        val newDirs = sc.parallelize(remainingDirectories.map(_.path))
+        val currentBatch = newDirs.flatMap { path =>
+          val conf = new Configuration()
+          conf.set("fs.s3n.awsAccessKeyId", s3Key)
+          conf.set("fs.s3n.awsSecretAccessKey", s3Secret)
+          val fileSystem = FileSystem.get(new java.net.URI(path), conf)
+          try {
+            val hadoopPath = new Path(path)
+            if (fileSystem.isDirectory(hadoopPath)) {
+              val sanitize = Option(fileSystem.listStatus(hadoopPath)).getOrElse(Array.empty)
+              sanitize.map(status => S3File(status.getPath.toString, status.isDirectory, status.getLen))
+            } else if (fileSystem.isFile(hadoopPath)) {
+              val status = fileSystem.getFileStatus(hadoopPath)
+              Seq(S3File(status.getPath.toString, status.isDirectory, status.getLen))
+            } else { // Maybe is glob or not found
+              val sanitize = Option(fileSystem.globStatus(hadoopPath)).getOrElse(Array.empty)
+              sanitize.map(status => S3File(status.getPath.toString, status.isDirectory, status.getLen))
+            }
+          } catch {
+            case e: java.io.FileNotFoundException =>
+              println(s"File $path not found.")
+              e.printStackTrace()
+              Nil
+          }
+        }.collect()
+        val (dirs, files) = currentBatch.partition(_.isDir)
+        remainingDirectories.clear()
+        remainingDirectories ++= dirs
+        allFiles ++= files
+      }
+
+      allFiles
+    }
+
   }
 }
