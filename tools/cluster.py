@@ -202,7 +202,7 @@ def launch(cluster_name, slaves,
            tag=[],
            key_id=default_key_id, region=default_region,
            zone=default_zone, instance_type=default_instance_type,
-           ondemand=False, spot_price=default_spot_price,
+           ondemand=False, spot_price=default_spot_price, master_spot=False,
            user_data=default_user_data,
            security_group = None,
            vpc = None,
@@ -252,6 +252,8 @@ def launch(cluster_name, slaves,
             ])
 
         spot_params = ['--spot-price', spot_price] if not ondemand else []
+        master_spot_params = ['--master-spot'] if not ondemand and master_spot else []
+
         ami_params = ['--ami', ami] if ami else []
         master_ami_params = ['--master-ami', master_ami] if master_ami else []
 
@@ -276,6 +278,7 @@ def launch(cluster_name, slaves,
                                  '--user-data', user_data,
                                  'launch', cluster_name] +
                                 spot_params +
+                                master_spot_params +
                                 resume_param +
                                 auth_params +
                                 ami_params +
