@@ -226,8 +226,7 @@ object SparkContextUtils {
               inputStream.close()
             } catch {
               case NonFatal(ex) =>
-                println(s"Fail to close resource from '$path'")
-                ex.printStackTrace()
+                println(s"Fail to close resource from '$path': ${ex.getMessage} -- ${ex.getStackTraceString}")
             }
           }
         }
