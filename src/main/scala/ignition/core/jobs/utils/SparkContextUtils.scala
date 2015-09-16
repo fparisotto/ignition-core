@@ -16,6 +16,7 @@ import scala.collection.mutable.ArrayBuffer
 import scala.io.Source
 import scala.reflect.ClassTag
 import scala.util.Try
+import scala.util.control.NonFatal
 
 object SparkContextUtils {
 
@@ -211,17 +212,23 @@ object SparkContextUtils {
       partitionedFiles.mapPartitions { files =>
         val conf = hadoopConf.value.foldLeft(new Configuration()) { case (acc, (k, v)) => acc.set(k, v); acc }
         val codecFactory = new CompressionCodecFactory(conf)
-        files.map { case (path, _) => path } flatMap { s3Path =>
-          val fileSystem = FileSystem.get(new java.net.URI(s3Path), conf)
-          val path = new Path(s3Path)
-          val inputStream = Option(codecFactory.getCodec(path)) match {
-            case Some(compression) => compression.createInputStream(fileSystem.open(path))
-            case None => fileSystem.open(path)
+        files.map { case (path, _) => path } flatMap { path =>
+          val fileSystem = FileSystem.get(new java.net.URI(path), conf)
+          val hadoopPath = new Path(path)
+          val inputStream = Option(codecFactory.getCodec(hadoopPath)) match {
+            case Some(compression) => compression.createInputStream(fileSystem.open(hadoopPath))
+            case None => fileSystem.open(hadoopPath)
           }
           try {
             Source.fromInputStream(inputStream).getLines().foldLeft(ArrayBuffer.empty[String])(_ += _)
           } finally {
-            Try { inputStream.close() }
+            try {
+              inputStream.close()
+            } catch {
+              case NonFatal(ex) =>
+                println(s"Fail to close resource from '$path'")
+                ex.printStackTrace()
+            }
           }
         }
       }
