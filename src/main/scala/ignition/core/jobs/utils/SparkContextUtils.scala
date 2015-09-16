@@ -1,20 +1,28 @@
 package ignition.core.jobs.utils
 
-import java.util.Date
-
 import ignition.core.utils.ByteUtils
+import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.io.LongWritable
-import org.apache.spark.SparkContext
+import org.apache.hadoop.io.compress.CompressionCodecFactory
+import org.apache.spark.broadcast.Broadcast
+import org.apache.spark.{Partitioner, SparkContext}
 import org.apache.hadoop.fs.{FileStatus, Path, FileSystem}
 import org.apache.spark.rdd.{UnionRDD, RDD}
-import org.joda.time.{DateTimeZone, DateTime}
+import org.joda.time.DateTime
 import ignition.core.utils.DateUtils._
 
+import scala.collection.JavaConversions._
+import scala.collection.mutable.ArrayBuffer
+import scala.io.Source
 import scala.reflect.ClassTag
 import scala.util.Try
-
+import scala.util.control.NonFatal
 
 object SparkContextUtils {
+
+  case class HadoopFile(path: String, isDir: Boolean, size: Long)
+
+  private case class HadoopFilePartition(size: Long, paths: Seq[String])
 
   implicit class SparkContextImprovements(sc: SparkContext) {
 
@@ -194,5 +202,98 @@ object SparkContextUtils {
       else
         objectHadoopFile(paths, minimumPaths)
     }
+
+    def parallelTextFiles(paths: Seq[String], maxBytesPerPartition: Long): RDD[String] = {
+      val hadoopConf = sc.broadcast(sc.hadoopConfiguration.iterator().map { case entry => entry.getKey -> entry.getValue }.toMap)
+
+      val foundFiles = parallelListFiles(paths)
+      val partitionedFiles = sc.parallelize(foundFiles.map(_.path)).map(file => file -> ()).partitionBy(createPartitioner(foundFiles, maxBytesPerPartition))
+
+      partitionedFiles.mapPartitions { files =>
+        val conf = hadoopConf.value.foldLeft(new Configuration()) { case (acc, (k, v)) => acc.set(k, v); acc }
+        val codecFactory = new CompressionCodecFactory(conf)
+        files.map { case (path, _) => path } flatMap { path =>
+          val fileSystem = FileSystem.get(new java.net.URI(path), conf)
+          val hadoopPath = new Path(path)
+          val inputStream = Option(codecFactory.getCodec(hadoopPath)) match {
+            case Some(compression) => compression.createInputStream(fileSystem.open(hadoopPath))
+            case None => fileSystem.open(hadoopPath)
+          }
+          try {
+            Source.fromInputStream(inputStream).getLines().foldLeft(ArrayBuffer.empty[String])(_ += _)
+          } finally {
+            try {
+              inputStream.close()
+            } catch {
+              case NonFatal(ex) =>
+                println(s"Fail to close resource from '$path': ${ex.getMessage} -- ${ex.getStackTraceString}")
+            }
+          }
+        }
+      }
+    }
+
+    private def createPartitioner(files: Seq[HadoopFile], maxBytesPerPartition: Long): Partitioner = {
+      val partitions = files.foldLeft(Seq.empty[HadoopFilePartition]) {
+        case (acc, file) =>
+          acc.find(bucket => bucket.size + file.size < maxBytesPerPartition) match {
+            case Some(found) =>
+              val updated = found.copy(size = found.size + file.size, paths = file.path +: found.paths)
+              acc.updated(acc.indexOf(found), updated)
+            case None => acc :+ HadoopFilePartition(file.size, Seq(file.path))
+          }
+      }
+
+      val indexedPartitions: Map[Any, Int] = partitions.zipWithIndex.flatMap {
+        case (bucket, index) => bucket.paths.map(path => path -> index)
+      }.toMap
+
+      new Partitioner {
+        override def numPartitions: Int = partitions.size
+        override def getPartition(key: Any): Int = indexedPartitions(key)
+      }
+    }
+
+    private def executeListOnWorkers(hadoopConf: Broadcast[Map[String, String]], paths: RDD[String]): Seq[HadoopFile] = {
+      paths.flatMap { path =>
+        val conf = hadoopConf.value.foldLeft(new Configuration()) { case (acc, (k, v)) => acc.set(k, v); acc }
+        val fileSystem = FileSystem.get(new java.net.URI(path), conf)
+        try {
+          val hadoopPath = new Path(path)
+          if (fileSystem.isDirectory(hadoopPath)) {
+            val sanitize = Option(fileSystem.listStatus(hadoopPath)).getOrElse(Array.empty)
+            sanitize.map(status => HadoopFile(status.getPath.toString, status.isDirectory, status.getLen))
+          } else if (fileSystem.isFile(hadoopPath)) {
+            val status = fileSystem.getFileStatus(hadoopPath)
+            Seq(HadoopFile(status.getPath.toString, status.isDirectory, status.getLen))
+          } else {
+            // Maybe is glob or not found
+            val sanitize = Option(fileSystem.globStatus(hadoopPath)).getOrElse(Array.empty)
+            sanitize.map(status => HadoopFile(status.getPath.toString, status.isDirectory, status.getLen))
+          }
+        } catch {
+          case e: java.io.FileNotFoundException =>
+            println(s"File $path not found.")
+            Nil
+        }
+      }.collect().toSeq
+    }
+
+    def parallelListFiles(paths: Seq[String]): Seq[HadoopFile] = {
+      val hadoopConf = sc.broadcast(sc.hadoopConfiguration.iterator().map { case entry => entry.getKey -> entry.getValue }.toMap)
+      val directories = paths.map(HadoopFile(_, isDir = true, 0))
+
+      def innerListFiles(remainingDirectories: Seq[HadoopFile]): Seq[HadoopFile] = {
+        if (remainingDirectories.isEmpty) {
+          Nil
+        } else {
+          val pathsRDD = sc.parallelize(remainingDirectories.map(_.path))
+          val (dirs, files) = executeListOnWorkers(hadoopConf, pathsRDD).partition(_.isDir)
+          files ++ innerListFiles(dirs)
+        }
+      }
+      innerListFiles(directories)
+    }
+
   }
 }
