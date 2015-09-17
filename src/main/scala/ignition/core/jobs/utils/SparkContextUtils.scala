@@ -13,7 +13,7 @@ import ignition.core.utils.DateUtils._
 
 import scala.collection.JavaConversions._
 import scala.collection.mutable.ArrayBuffer
-import scala.io.Source
+import scala.io.{Codec, Source}
 import scala.reflect.ClassTag
 import scala.util.Try
 import scala.util.control.NonFatal
@@ -220,7 +220,7 @@ object SparkContextUtils {
             case None => fileSystem.open(hadoopPath)
           }
           try {
-            Source.fromInputStream(inputStream).getLines().foldLeft(ArrayBuffer.empty[String])(_ += _)
+            Source.fromInputStream(inputStream)(Codec.UTF8).getLines().foldLeft(ArrayBuffer.empty[String])(_ += _)
           } finally {
             try {
               inputStream.close()
