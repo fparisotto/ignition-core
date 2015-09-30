@@ -22,6 +22,12 @@ object CollectionUtils {
     }
   }
 
+
+
+  implicit class TraversableOnceLong(xs: TraversableOnce[Long]) {
+    def toBag(): IntBag = IntBag.from(xs)
+  }
+
   implicit class TraversableLikeImprovements[A, Repr](xs: TraversableLike[A, Repr]) {
     def distinctBy[B, That](f: A => B)(implicit cbf: CanBuildFrom[Repr, A, That]) = {
       val builder = cbf(xs.repr)

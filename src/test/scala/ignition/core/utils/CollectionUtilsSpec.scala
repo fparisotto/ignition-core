@@ -33,6 +33,4 @@ class CollectionUtilsSpec extends FlatSpec with ShouldMatchers {
   }
 
 
-
-
 }
