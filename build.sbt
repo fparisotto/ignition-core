@@ -13,7 +13,7 @@ ideaExcludeFolders += ".idea_modules"
 // Because we can't run two spark contexts on same VM
 parallelExecution in Test := false
 
-libraryDependencies += ("org.apache.spark" %% "spark-core" % "1.4.1" % "provided")
+libraryDependencies += ("org.apache.spark" %% "spark-core" % "1.5.1" % "provided")
   .exclude("org.apache.hadoop", "hadoop-client")
   .exclude("org.slf4j", "slf4j-log4j12")
 
