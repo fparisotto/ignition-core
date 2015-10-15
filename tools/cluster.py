@@ -38,6 +38,7 @@ script_path = os.path.dirname(os.path.realpath(__file__))
 default_instance_type = 'r3.xlarge'
 default_spot_price = '0.10'
 default_worker_instances = '1'
+default_executor_instances = '1'
 default_master_instance_type = 'm3.xlarge'
 default_driver_heap_size = '12G'
 default_region = 'us-east-1'
@@ -209,7 +210,9 @@ def launch(cluster_name, slaves,
            vpc_subnet = None,
            master_instance_type=default_master_instance_type,
            wait_time='180', hadoop_major_version='2',
-           worker_instances=default_worker_instances, retries_on_same_cluster=5,
+           worker_instances=default_worker_instances,
+           executor_instances=default_executor_instances,
+           retries_on_same_cluster=5,
            max_clusters_to_create=5,
            minimum_percentage_healthy_slaves=0.9,
            remote_user=default_remote_user,
@@ -272,6 +275,7 @@ def launch(cluster_name, slaves,
                                  '--spark-ec2-git-repo', spark_ec2_git_repo,
                                  '--spark-ec2-git-branch', spark_ec2_git_branch,
                                  '--worker-instances', worker_instances,
+                                 '--executor-instances', executor_instances,
                                  '--master-opts', '-Dspark.worker.timeout={0}'.format(worker_timeout),
                                  '--spark-git-repo', spark_repo,
                                  '-v', spark_version,
