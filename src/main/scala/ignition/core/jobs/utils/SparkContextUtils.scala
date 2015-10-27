@@ -36,7 +36,7 @@ object SparkContextUtils {
       for {
         path <- paths
         status <- Option(fs.globStatus(path)).getOrElse(Array.empty).toSeq
-        if status.isDirectory || !removeEmpty || status.getLen > 0 // remove empty files if necessary
+        if !removeEmpty || status.getLen > 0 || status.isDirectory // remove empty files if necessary
       } yield status
     }
 
@@ -67,6 +67,14 @@ object SparkContextUtils {
 
     private def processTextFiles(paths: Seq[String], minimumPaths: Int): RDD[String] = {
       processPaths((p) => sc.textFile(p), paths, minimumPaths)
+    }
+
+    private def processParallelTextFiles(paths: Seq[String], minimumPaths: Int, maxBytesPerPartition: Long): RDD[String] = {
+      val splittedPaths = paths.flatMap(ignition.core.utils.HadoopUtils.getPathStrings)
+      if (splittedPaths.size < minimumPaths)
+        throw new Exception(s"Not enough paths found for $paths")
+
+      parallelTextFiles(splittedPaths, maxBytesPerPartition)
     }
 
     private def filterPaths(paths: Seq[String],
@@ -145,6 +153,14 @@ object SparkContextUtils {
         processTextFiles(paths, minimumPaths)
     }
 
+    def getParallelTextFiles(paths: Seq[String], maxBytesPerPartition: Long, synchLocally: Boolean = false, forceSynch: Boolean = false, minimumPaths: Int = 1): RDD[String] = {
+      if (synchLocally)
+        processParallelTextFiles(synchToHdfs(paths, processTextFiles, forceSynch), minimumPaths, maxBytesPerPartition)
+      else
+        processParallelTextFiles(paths, minimumPaths, maxBytesPerPartition)
+    }
+
+    @deprecated("It may incur in heavy S3 costs and/or be slow with small files, use filterAndGetParallelTextFiles instead", "2015-10-27")
     def filterAndGetTextFiles(path: String,
                               requireSuccess: Boolean = false,
                               inclusiveStartDate: Boolean = true,
@@ -160,6 +176,24 @@ object SparkContextUtils {
       if (paths.size < minimumPaths)
         throw new Exception(s"Tried with start/end time equals to $startDate/$endDate for path $path but but the resulting number of paths $paths is less than the required")
       getTextFiles(paths, synchLocally, forceSynch, minimumPaths)
+    }
+
+    def filterAndGetParallelTextFiles(path: String,
+                                      maxBytesPerPartition: Long = 64 * 1000 * 1000,
+                                      requireSuccess: Boolean = false,
+                                      inclusiveStartDate: Boolean = true,
+                                      startDate: Option[DateTime] = None,
+                                      inclusiveEndDate: Boolean = true,
+                                      endDate: Option[DateTime] = None,
+                                      lastN: Option[Int] = None,
+                                      synchLocally: Boolean = false,
+                                      forceSynch: Boolean = false,
+                                      ignoreMalformedDates: Boolean = false,
+                                      minimumPaths: Int = 1)(implicit dateExtractor: PathDateExtractor): RDD[String] = {
+      val paths = getFilteredPaths(Seq(path), requireSuccess, inclusiveStartDate, startDate, inclusiveEndDate, endDate, lastN, ignoreMalformedDates)
+      if (paths.size < minimumPaths)
+        throw new Exception(s"Tried with start/end time equals to $startDate/$endDate for path $path but but the resulting number of paths $paths is less than the required")
+      getParallelTextFiles(paths, maxBytesPerPartition, synchLocally, forceSynch, minimumPaths)
     }
 
     private def stringHadoopFile(paths: Seq[String], minimumPaths: Int): RDD[Try[String]] = {
@@ -260,11 +294,11 @@ object SparkContextUtils {
         val fileSystem = FileSystem.get(new java.net.URI(path), conf)
         try {
           val hadoopPath = new Path(path)
-          if (fileSystem.isDirectory(hadoopPath)) {
+          val status = fileSystem.getFileStatus(hadoopPath)
+          if (status.isDirectory) {
             val sanitize = Option(fileSystem.listStatus(hadoopPath)).getOrElse(Array.empty)
             sanitize.map(status => HadoopFile(status.getPath.toString, status.isDirectory, status.getLen))
-          } else if (fileSystem.isFile(hadoopPath)) {
-            val status = fileSystem.getFileStatus(hadoopPath)
+          } else if (status.isFile) {
             Seq(HadoopFile(status.getPath.toString, status.isDirectory, status.getLen))
           } else {
             // Maybe is glob or not found
