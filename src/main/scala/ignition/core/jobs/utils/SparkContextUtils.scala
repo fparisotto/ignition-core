@@ -253,9 +253,9 @@ object SparkContextUtils {
       partitionedFiles.mapPartitions { files =>
         val conf = hadoopConf.value.foldLeft(new Configuration()) { case (acc, (k, v)) => acc.set(k, v); acc }
         val codecFactory = new CompressionCodecFactory(conf)
-        val fileSystem = FileSystem.get(new java.net.URI(paths.head), conf)
         files.map { case (path, _) => path } flatMap { path =>
           val hadoopPath = new Path(path)
+          val fileSystem = hadoopPath.getFileSystem(conf)
           val inputStream = Option(codecFactory.getCodec(hadoopPath)) match {
             case Some(compression) => compression.createInputStream(fileSystem.open(hadoopPath))
             case None => fileSystem.open(hadoopPath)
@@ -304,8 +304,8 @@ object SparkContextUtils {
     private def executeListOnWorkers(hadoopConf: Broadcast[Map[String, String]], paths: RDD[String]): List[HadoopFile] = {
       paths.flatMap { path =>
         val conf = hadoopConf.value.foldLeft(new Configuration()) { case (acc, (k, v)) => acc.set(k, v); acc }
-        val fileSystem = FileSystem.get(new java.net.URI(path), conf)
         val hadoopPath = new Path(path)
+        val fileSystem = hadoopPath.getFileSystem(conf)
         val tryFind = try {
           val status = fileSystem.getFileStatus(hadoopPath)
           if (status.isDirectory) {
