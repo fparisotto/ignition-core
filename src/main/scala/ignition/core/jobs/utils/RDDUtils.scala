@@ -80,6 +80,10 @@ object RDDUtils {
       }, preservesPartitioning = true)
     }
 
+    def collectValues[U: ClassTag](f: PartialFunction[V, U]): RDD[(K, U)] = {
+      rdd.filter { case (k, v) => f.isDefinedAt(v) }.mapValues(f)
+    }
+
     def groupByKeyAndTake(n: Int): RDD[(K, List[V])] =
       rdd.aggregateByKey(List.empty[V])(
         (lst, v) =>

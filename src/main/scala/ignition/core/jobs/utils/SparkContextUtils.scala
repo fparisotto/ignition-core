@@ -75,7 +75,7 @@ object SparkContextUtils {
       if (splittedPaths.size < minimumPaths)
         throw new Exception(s"Not enough paths found for $paths")
 
-      parallelTextFiles(splittedPaths, maxBytesPerPartition, minPartitions)
+      parallelTextFiles(splittedPaths.toList, maxBytesPerPartition, minPartitions)
     }
 
     private def filterPaths(paths: Seq[String],
@@ -243,7 +243,7 @@ object SparkContextUtils {
         objectHadoopFile(paths, minimumPaths)
     }
 
-    def parallelTextFiles(paths: Seq[String], maxBytesPerPartition: Long, minPartitions: Int): RDD[String] = {
+    def parallelTextFiles(paths: List[String], maxBytesPerPartition: Long, minPartitions: Int): RDD[String] = {
       require(paths.nonEmpty, "At least one path is required")
       val hadoopConf = sc.broadcast(sc.hadoopConfiguration.iterator().map { case entry => entry.getKey -> entry.getValue }.toMap)
 
@@ -274,7 +274,7 @@ object SparkContextUtils {
       }
     }
 
-    private def createPartitioner(files: Seq[HadoopFile], maxBytesPerPartition: Long, minPartitions: Long): Partitioner = {
+    private def createPartitioner(files: List[HadoopFile], maxBytesPerPartition: Long, minPartitions: Long): Partitioner = {
       implicit val ordering: Ordering[HadoopFilePartition] = Ordering.by(p => -p.size) // Small partitions come first (highest priority)
 
       val pq: mutable.PriorityQueue[HadoopFilePartition] = mutable.PriorityQueue.empty
@@ -289,7 +289,7 @@ object SparkContextUtils {
               acc.tail += updated
             case None => acc += HadoopFilePartition(file.size, Seq(file.path))
           }
-      }.filter(_.size > 0).toList // Remove empty partitions
+      }.filter(_.paths.nonEmpty).toList // Remove empty partitions
 
       val indexedPartitions: Map[Any, Int] = partitions.zipWithIndex.flatMap {
         case (bucket, index) => bucket.paths.map(path => path -> index)
@@ -301,36 +301,39 @@ object SparkContextUtils {
       }
     }
 
-    private def executeListOnWorkers(hadoopConf: Broadcast[Map[String, String]], paths: RDD[String]): Seq[HadoopFile] = {
+    private def executeListOnWorkers(hadoopConf: Broadcast[Map[String, String]], paths: RDD[String]): List[HadoopFile] = {
       paths.flatMap { path =>
         val conf = hadoopConf.value.foldLeft(new Configuration()) { case (acc, (k, v)) => acc.set(k, v); acc }
         val fileSystem = FileSystem.get(new java.net.URI(path), conf)
-        try {
-          val hadoopPath = new Path(path)
+        val hadoopPath = new Path(path)
+        val tryFind = try {
           val status = fileSystem.getFileStatus(hadoopPath)
           if (status.isDirectory) {
             val sanitize = Option(fileSystem.listStatus(hadoopPath)).getOrElse(Array.empty)
-            sanitize.map(status => HadoopFile(status.getPath.toString, status.isDirectory, status.getLen))
+            Option(sanitize.map(status => HadoopFile(status.getPath.toString, status.isDirectory, status.getLen)).toList)
           } else if (status.isFile) {
-            Seq(HadoopFile(status.getPath.toString, status.isDirectory, status.getLen))
+            Option(List(HadoopFile(status.getPath.toString, status.isDirectory, status.getLen)))
           } else {
-            // Maybe is glob or not found
-            val sanitize = Option(fileSystem.globStatus(hadoopPath)).getOrElse(Array.empty)
-            sanitize.map(status => HadoopFile(status.getPath.toString, status.isDirectory, status.getLen))
+            None
           }
         } catch {
           case e: java.io.FileNotFoundException =>
-            println(s"File $path not found.")
-            Nil
+            None
         }
-      }.collect().toSeq
+
+        tryFind.getOrElse {
+          // Maybe is glob or not found
+          val sanitize = Option(fileSystem.globStatus(hadoopPath)).getOrElse(Array.empty)
+          sanitize.map(status => HadoopFile(status.getPath.toString, status.isDirectory, status.getLen)).toList
+        }
+      }.collect().toList
     }
 
-    def parallelListFiles(paths: Seq[String]): Seq[HadoopFile] = {
+    def parallelListFiles(paths: List[String]): List[HadoopFile] = {
       val hadoopConf = sc.broadcast(sc.hadoopConfiguration.iterator().map { case entry => entry.getKey -> entry.getValue }.toMap)
       val directories = paths.map(HadoopFile(_, isDir = true, 0))
 
-      def innerListFiles(remainingDirectories: Seq[HadoopFile]): Seq[HadoopFile] = {
+      def innerListFiles(remainingDirectories: List[HadoopFile]): List[HadoopFile] = {
         if (remainingDirectories.isEmpty) {
           Nil
         } else {
