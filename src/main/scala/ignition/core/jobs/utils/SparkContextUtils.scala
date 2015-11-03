@@ -27,6 +27,8 @@ object SparkContextUtils {
 
   implicit class SparkContextImprovements(sc: SparkContext) {
 
+    lazy val _hadoopConf = sc.broadcast(sc.hadoopConfiguration.iterator().map { case entry => entry.getKey -> entry.getValue }.toMap)
+
     private def getFileSystem(path: Path): FileSystem = {
       path.getFileSystem(sc.hadoopConfiguration)
     }
@@ -70,12 +72,16 @@ object SparkContextUtils {
       processPaths((p) => sc.textFile(p), paths, minimumPaths)
     }
 
-    private def processParallelTextFiles(paths: Seq[String], minimumPaths: Int, maxBytesPerPartition: Long, minPartitions: Int): RDD[String] = {
+    private def processParallelTextFiles(paths: Seq[String],
+                                         minimumPaths: Int,
+                                         maxBytesPerPartition: Long,
+                                         minPartitions: Int,
+                                         listOnWorkers: Boolean): RDD[String] = {
       val splittedPaths = paths.flatMap(ignition.core.utils.HadoopUtils.getPathStrings)
       if (splittedPaths.size < minimumPaths)
         throw new Exception(s"Not enough paths found for $paths")
 
-      parallelTextFiles(splittedPaths.toList, maxBytesPerPartition, minPartitions)
+      parallelTextFiles(splittedPaths.toList, maxBytesPerPartition, minPartitions, listOnWorkers)
     }
 
     private def filterPaths(paths: Seq[String],
@@ -158,11 +164,11 @@ object SparkContextUtils {
     def getParallelTextFiles(paths: Seq[String],
                              maxBytesPerPartition: Long = 64 * 1000 * 1000,
                              minPartitions: Int = 500,
-                             synchLocally: Boolean = false, forceSynch: Boolean = false, minimumPaths: Int = 1): RDD[String] = {
+                             synchLocally: Boolean = false, forceSynch: Boolean = false, minimumPaths: Int = 1, listOnWorkers: Boolean = false): RDD[String] = {
       if (synchLocally)
-        processParallelTextFiles(synchToHdfs(paths, processTextFiles, forceSynch), minimumPaths, maxBytesPerPartition, minPartitions)
+        processParallelTextFiles(synchToHdfs(paths, processTextFiles, forceSynch), minimumPaths, maxBytesPerPartition, minPartitions, listOnWorkers)
       else
-        processParallelTextFiles(paths, minimumPaths, maxBytesPerPartition, minPartitions)
+        processParallelTextFiles(paths, minimumPaths, maxBytesPerPartition, minPartitions, listOnWorkers)
     }
 
     @deprecated("It may incur heavy S3 costs and/or be slow with small files, use filterAndGetParallelTextFiles instead", "2015-10-27")
@@ -195,11 +201,12 @@ object SparkContextUtils {
                                       synchLocally: Boolean = false,
                                       forceSynch: Boolean = false,
                                       ignoreMalformedDates: Boolean = false,
-                                      minimumPaths: Int = 1)(implicit dateExtractor: PathDateExtractor): RDD[String] = {
+                                      minimumPaths: Int = 1,
+                                      listOnWorkers: Boolean = false)(implicit dateExtractor: PathDateExtractor): RDD[String] = {
       val paths = getFilteredPaths(Seq(path), requireSuccess, inclusiveStartDate, startDate, inclusiveEndDate, endDate, lastN, ignoreMalformedDates)
       if (paths.size < minimumPaths)
         throw new Exception(s"Tried with start/end time equals to $startDate/$endDate for path $path but but the resulting number of paths $paths is less than the required")
-      getParallelTextFiles(paths, maxBytesPerPartition, minPartitions, synchLocally, forceSynch, minimumPaths)
+      getParallelTextFiles(paths, maxBytesPerPartition, minPartitions, synchLocally, forceSynch, minimumPaths, listOnWorkers)
     }
 
     private def stringHadoopFile(paths: Seq[String], minimumPaths: Int): RDD[Try[String]] = {
@@ -243,13 +250,12 @@ object SparkContextUtils {
         objectHadoopFile(paths, minimumPaths)
     }
 
-    def parallelTextFiles(paths: List[String], maxBytesPerPartition: Long, minPartitions: Int): RDD[String] = {
-      require(paths.nonEmpty, "At least one path is required")
-      val hadoopConf = sc.broadcast(sc.hadoopConfiguration.iterator().map { case entry => entry.getKey -> entry.getValue }.toMap)
+    def parallelTextFiles(paths: List[String], maxBytesPerPartition: Long, minPartitions: Int, listOnWorkers: Boolean): RDD[String] = {
 
-      val foundFiles = parallelListFiles(paths)
-      val partitionedFiles = sc.parallelize(foundFiles.map(_.path)).map(file => file -> ()).partitionBy(createPartitioner(foundFiles, maxBytesPerPartition, minPartitions))
+      val foundFiles = (if (listOnWorkers) parallelListFiles(paths) else driverListFiles(paths)).filter(_.size > 0)
+      val partitionedFiles = sc.parallelize(foundFiles.map(_.path).map(file => file -> ()), 2).partitionBy(createPartitioner(foundFiles, maxBytesPerPartition, minPartitions))
 
+      val hadoopConf = _hadoopConf
       partitionedFiles.mapPartitions { files =>
         val conf = hadoopConf.value.foldLeft(new Configuration()) { case (acc, (k, v)) => acc.set(k, v); acc }
         val codecFactory = new CompressionCodecFactory(conf)
@@ -262,6 +268,10 @@ object SparkContextUtils {
           }
           try {
             Source.fromInputStream(inputStream)(Codec.UTF8).getLines().foldLeft(ArrayBuffer.empty[String])(_ += _)
+          } catch {
+            case NonFatal(ex) =>
+              println(s"Failed to read resource from '$path': ${ex.getMessage} -- ${ex.getStackTraceString}")
+              throw new Exception(s"Failed to read resource from '$path': ${ex.getMessage} -- ${ex.getStackTraceString}")
           } finally {
             try {
               inputStream.close()
@@ -301,7 +311,9 @@ object SparkContextUtils {
       }
     }
 
-    private def executeListOnWorkers(hadoopConf: Broadcast[Map[String, String]], paths: RDD[String]): List[HadoopFile] = {
+
+    private def executeListOnWorkers(paths: RDD[String]): List[HadoopFile] = {
+      val hadoopConf = _hadoopConf
       paths.flatMap { path =>
         val conf = hadoopConf.value.foldLeft(new Configuration()) { case (acc, (k, v)) => acc.set(k, v); acc }
         val hadoopPath = new Path(path)
@@ -329,16 +341,62 @@ object SparkContextUtils {
       }.collect().toList
     }
 
+
     def parallelListFiles(paths: List[String]): List[HadoopFile] = {
-      val hadoopConf = sc.broadcast(sc.hadoopConfiguration.iterator().map { case entry => entry.getKey -> entry.getValue }.toMap)
+
       val directories = paths.map(HadoopFile(_, isDir = true, 0))
 
       def innerListFiles(remainingDirectories: List[HadoopFile]): List[HadoopFile] = {
         if (remainingDirectories.isEmpty) {
           Nil
         } else {
-          val pathsRDD = sc.parallelize(remainingDirectories.map(_.path))
-          val (dirs, files) = executeListOnWorkers(hadoopConf, pathsRDD).partition(_.isDir)
+          val remainingPaths = remainingDirectories.map(_.path)
+          val pathsRDD = sc.parallelize(remainingPaths, remainingPaths.size / 2)
+          val (dirs, files) = executeListOnWorkers(pathsRDD).partition(_.isDir)
+          files ++ innerListFiles(dirs)
+        }
+      }
+      innerListFiles(directories)
+    }
+
+
+    private def executeDriverList(paths: Seq[String]): List[HadoopFile] = {
+      val conf = _hadoopConf.value.foldLeft(new Configuration()) { case (acc, (k, v)) => acc.set(k, v); acc }
+      paths.flatMap { path =>
+        val hadoopPath = new Path(path)
+        val fileSystem = hadoopPath.getFileSystem(conf)
+        val tryFind = try {
+          val status = fileSystem.getFileStatus(hadoopPath)
+          if (status.isDirectory) {
+            val sanitize = Option(fileSystem.listStatus(hadoopPath)).getOrElse(Array.empty)
+            Option(sanitize.map(status => HadoopFile(status.getPath.toString, status.isDirectory, status.getLen)).toList)
+          } else if (status.isFile) {
+            Option(List(HadoopFile(status.getPath.toString, status.isDirectory, status.getLen)))
+          } else {
+            None
+          }
+        } catch {
+          case e: java.io.FileNotFoundException =>
+            None
+        }
+
+        tryFind.getOrElse {
+          // Maybe is glob or not found
+          val sanitize = Option(fileSystem.globStatus(hadoopPath)).getOrElse(Array.empty)
+          sanitize.map(status => HadoopFile(status.getPath.toString, status.isDirectory, status.getLen)).toList
+        }
+      }.toList
+    }
+
+    def driverListFiles(paths: List[String]): List[HadoopFile] = {
+
+      val directories = paths.map(HadoopFile(_, isDir = true, 0))
+
+      def innerListFiles(remainingDirectories: List[HadoopFile]): List[HadoopFile] = {
+        if (remainingDirectories.isEmpty) {
+          Nil
+        } else {
+          val (dirs, files) = executeDriverList(remainingDirectories.map(_.path)).partition(_.isDir)
           files ++ innerListFiles(dirs)
         }
       }
