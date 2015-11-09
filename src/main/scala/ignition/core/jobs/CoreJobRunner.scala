@@ -67,6 +67,8 @@ object CoreJobRunner {
 
       val sparkConf = new SparkConf()
       sparkConf.set("spark.executor.memory", config.executorMemory)
+      sparkConf.set("spark.hadoop.io.compression.codecs",
+        "org.apache.hadoop.io.compress.DefaultCodec,nl.basjes.hadoop.io.compress.SplittableGzipCodec,org.apache.hadoop.io.compress.BZip2Codec")
 
       sparkConf.setMaster(config.master)
       sparkConf.setAppName(appName)
