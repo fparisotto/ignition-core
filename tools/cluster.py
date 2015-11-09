@@ -49,6 +49,9 @@ default_ami = None # will be decided based on spark-ec2 list
 default_master_ami = None
 default_env = 'dev'
 default_spark_version = '1.5.1'
+custom_builds = {
+    '1.5.1': 'https://s3.amazonaws.com/chaordic-ignition-public/spark-1.5.1-bin-cdh4.7.1.tgz'
+}
 default_spark_repo = 'https://github.com/chaordic/spark'
 default_remote_user = 'ec2-user'
 default_remote_control_dir = '/tmp/Ignition'
@@ -259,6 +262,8 @@ def launch(cluster_name, slaves,
 
         ami_params = ['--ami', ami] if ami else []
         master_ami_params = ['--master-ami', master_ami] if master_ami else []
+
+        spark_version = custom_builds.get(spark_version, spark_version)
 
         for i in range(retries_on_same_cluster):
             log.info('Running script, try %d of %d', i + 1, retries_on_same_cluster)
