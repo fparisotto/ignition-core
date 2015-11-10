@@ -307,7 +307,9 @@ object SparkContextUtils {
                      maxBytesPerPartition: Long,
                      minPartitions: Int,
                      sizeBasedFileHandling: SizeBasedFileHandling): RDD[String] = {
-      def confWith(maxSplitSize: Long): Configuration = (_hadoopConf.value ++ Seq("mapreduce.input.fileinputformat.split.maxsize" -> maxSplitSize.toString))
+      def confWith(maxSplitSize: Long): Configuration = (_hadoopConf.value ++ Seq(
+        "io.compression.codecs" -> "org.apache.hadoop.io.compress.DefaultCodec,nl.basjes.hadoop.io.compress.SplittableGzipCodec,org.apache.hadoop.io.compress.BZip2Codec",
+        "mapreduce.input.fileinputformat.split.maxsize" -> maxSplitSize.toString))
         .foldLeft(new Configuration()) { case (acc, (k, v)) => acc.set(k, v); acc }
 
       def read(file: HadoopFile, conf: Configuration) = sc.newAPIHadoopFile[LongWritable, Text, TextInputFormat](conf = conf, fClass = classOf[TextInputFormat],
@@ -317,10 +319,12 @@ object SparkContextUtils {
       val confUncompressed = confWith(maxBytesPerPartition)
 
       val union = new UnionRDD(sc, bigFiles.map { file =>
+
         val conf = if (sizeBasedFileHandling.isCompressed(file))
           confCompressed
         else
           confUncompressed
+
         read(file, conf)
       })
 
