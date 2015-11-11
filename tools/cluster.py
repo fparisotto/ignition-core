@@ -50,7 +50,7 @@ default_master_ami = None
 default_env = 'dev'
 default_spark_version = '1.5.1'
 custom_builds = {
-    '1.5.1': 'https://s3.amazonaws.com/chaordic-ignition-public/spark-1.5.1-bin-cdh4.7.1.tgz'
+#    '1.5.1': 'https://s3.amazonaws.com/chaordic-ignition-public/spark-1.5.1-bin-cdh4.7.1.tgz'
 }
 default_spark_repo = 'https://github.com/chaordic/spark'
 default_remote_user = 'ec2-user'
