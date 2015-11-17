@@ -1,16 +1,18 @@
 package ignition.core.jobs.utils
 
+import com.amazonaws.services.s3.AmazonS3Client
+import com.amazonaws.services.s3.model.{S3ObjectSummary, S3Object}
 import ignition.core.utils.ByteUtils
 import org.apache.hadoop.conf.Configuration
 import org.apache.hadoop.io.{Text, LongWritable}
 import org.apache.hadoop.io.compress.CompressionCodecFactory
 import org.apache.hadoop.mapreduce.lib.input.TextInputFormat
-import org.apache.spark.broadcast.Broadcast
 import org.apache.spark.{Partitioner, SparkContext}
 import org.apache.hadoop.fs.{FileStatus, Path, FileSystem}
 import org.apache.spark.rdd.{UnionRDD, RDD}
 import org.joda.time.DateTime
 import ignition.core.utils.DateUtils._
+import ignition.core.utils.S3Utils._
 
 import scala.collection.JavaConversions._
 import scala.collection.mutable.ArrayBuffer
@@ -24,6 +26,11 @@ object SparkContextUtils {
 
   case class IndexedPartitioner(numPartitions: Int, index: Map[Any, Int]) extends Partitioner {
     override def getPartition(key: Any): Int = index(key)
+  }
+
+  implicit class S3ObjectSummaryExtensions(s3Object: S3ObjectSummary) {
+    def toHadoopFile: HadoopFile =
+      HadoopFile(s"s3n://${s3Object.getBucketName}/${s3Object.getKey}", isDir = false, s3Object.getSize)
   }
 
   case class HadoopFile(path: String, isDir: Boolean, size: Long)
@@ -86,7 +93,7 @@ object SparkContextUtils {
       if (splittedPaths.size < minimumPaths)
         throw new Exception(s"Not enough paths found for $paths")
 
-      parallelTextFiles(splittedPaths.toList, maxBytesPerPartition, minPartitions, listOnWorkers)
+      parallelListEndReadTextFiles(splittedPaths.toList, maxBytesPerPartition, minPartitions, listOnWorkers)
     }
 
     private def filterPaths(paths: Seq[String],
@@ -257,14 +264,14 @@ object SparkContextUtils {
 
     case class SizeBasedFileHandling(averageEstimatedCompressionRatio: Int = 8,
                                      compressedExtensions: Set[String] = Set(".gz")) {
-      
+
       def isBig(f: HadoopFile, uncompressedBigSize: Long): Boolean = estimatedSize(f) >= uncompressedBigSize
-      
+
       def estimatedSize(f: HadoopFile) = if (isCompressed(f))
         f.size * averageEstimatedCompressionRatio
       else
         f.size
-      
+
       def isCompressed(f: HadoopFile): Boolean = compressedExtensions.exists(f.path.endsWith)
     }
 
@@ -334,15 +341,21 @@ object SparkContextUtils {
         union
     }
 
-    def parallelTextFiles(paths: List[String],
-                          maxBytesPerPartition: Long,
-                          minPartitions: Int,
-                          listOnWorkers: Boolean,
-                          sizeBasedFileHandling: SizeBasedFileHandling = SizeBasedFileHandling()): RDD[String] = {
+    def parallelListEndReadTextFiles(paths: List[String],
+                                     maxBytesPerPartition: Long,
+                                     minPartitions: Int,
+                                     listOnWorkers: Boolean,
+                                     sizeBasedFileHandling: SizeBasedFileHandling = SizeBasedFileHandling()): RDD[String] = {
 
       val foundFiles = (if (listOnWorkers) parallelListFiles(paths) else driverListFiles(paths)).filter(_.size > 0)
-      val (bigFiles, smallFiles) = foundFiles.partition(f => sizeBasedFileHandling.isBig(f, maxBytesPerPartition))
+      parallelReadTextFiles(foundFiles, maxBytesPerPartition, minPartitions, sizeBasedFileHandling)
+    }
 
+    def parallelReadTextFiles(files: List[HadoopFile],
+                              maxBytesPerPartition: Long,
+                              minPartitions: Int,
+                              sizeBasedFileHandling: SizeBasedFileHandling = SizeBasedFileHandling()): RDD[String] = {
+      val (bigFiles, smallFiles) = files.partition(f => sizeBasedFileHandling.isBig(f, maxBytesPerPartition))
       sc.union(
         readSmallFiles(smallFiles, maxBytesPerPartition, minPartitions, sizeBasedFileHandling),
         readBigFiles(bigFiles, maxBytesPerPartition, minPartitions, sizeBasedFileHandling))
@@ -464,6 +477,20 @@ object SparkContextUtils {
         }
       }
       innerListFiles(directories)
+    }
+
+    def s3FilterAndGetParallelTextFiles(bucket: String,
+                                        prefix: String,
+                                        startDate: Option[DateTime] = None,
+                                        endDate: Option[DateTime] = None,
+                                        endsWith: Option[String] = None,
+                                        predicate: S3ObjectSummary => Boolean = _ => true,
+                                        maxBytesPerPartition: Long = 256 * 1000 * 1000,
+                                        minPartitions: Int = 100,
+                                        sizeBasedFileHandling: SizeBasedFileHandling = SizeBasedFileHandling())
+                                       (implicit  s3Client: AmazonS3Client, dateExtractor: PathDateExtractor): RDD[String] = {
+      val foundFiles = s3ListAndFilterFiles(bucket, prefix, startDate, endDate, predicate = predicate)(s3Client, dateExtractor).map(_.toHadoopFile)
+      parallelReadTextFiles(foundFiles, maxBytesPerPartition, minPartitions, sizeBasedFileHandling)
     }
 
   }
