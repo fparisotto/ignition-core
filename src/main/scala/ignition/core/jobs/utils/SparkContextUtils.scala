@@ -361,7 +361,6 @@ object SparkContextUtils {
                      minPartitions: Int,
                      sizeBasedFileHandling: SizeBasedFileHandling): RDD[String] = {
       def confWith(maxSplitSize: Long): Configuration = (_hadoopConf.value ++ Seq(
-        "io.compression.codecs" -> "org.apache.hadoop.io.compress.DefaultCodec,nl.basjes.hadoop.io.compress.SplittableGzipCodec,org.apache.hadoop.io.compress.BZip2Codec",
         "mapreduce.input.fileinputformat.split.maxsize" -> maxSplitSize.toString))
         .foldLeft(new Configuration()) { case (acc, (k, v)) => acc.set(k, v); acc }
 
