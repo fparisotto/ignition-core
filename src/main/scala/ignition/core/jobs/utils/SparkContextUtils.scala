@@ -1,26 +1,38 @@
 package ignition.core.jobs.utils
 
-import ignition.core.utils.ByteUtils
-import org.apache.hadoop.conf.Configuration
-import org.apache.hadoop.io.{Text, LongWritable}
-import org.apache.hadoop.io.compress.CompressionCodecFactory
-import org.apache.hadoop.mapreduce.lib.input.TextInputFormat
-import org.apache.spark.broadcast.Broadcast
-import org.apache.spark.{Partitioner, SparkContext}
-import org.apache.hadoop.fs.{FileStatus, Path, FileSystem}
-import org.apache.spark.rdd.{UnionRDD, RDD}
-import org.joda.time.DateTime
+import java.io.InputStream
+
 import ignition.core.utils.DateUtils._
+import ignition.core.utils.{AutoCloseableIterator, ByteUtils}
+import org.apache.hadoop.conf.Configuration
+import org.apache.hadoop.fs.{FileStatus, FileSystem, Path}
+import org.apache.hadoop.io.compress.CompressionCodecFactory
+import org.apache.hadoop.io.{LongWritable, Text}
+import org.apache.hadoop.mapreduce.lib.input.TextInputFormat
+import org.apache.spark.rdd.{RDD, UnionRDD}
+import org.apache.spark.{Partitioner, SparkContext}
+import org.joda.time.DateTime
 
 import scala.collection.JavaConversions._
-import scala.collection.mutable.ArrayBuffer
 import scala.collection.mutable
+import scala.collection.mutable.ArrayBuffer
 import scala.io.{Codec, Source}
 import scala.reflect.ClassTag
 import scala.util.Try
 import scala.util.control.NonFatal
 
 object SparkContextUtils {
+
+  def close(inputStream: InputStream, path: String): Unit = {
+    try {
+      inputStream.close()
+    } catch {
+      case NonFatal(ex) =>
+        println(s"Fail to close resource from '$path': ${ex.getMessage} -- ${ex.getStackTraceString}")
+    }
+  }
+
+  case class BigFileSlice(index: Int)
 
   case class IndexedPartitioner(numPartitions: Int, index: Map[Any, Int]) extends Partitioner {
     override def getPartition(key: Any): Int = index(key)
@@ -273,7 +285,7 @@ object SparkContextUtils {
                        maxBytesPerPartition: Long,
                        minPartitions: Int,
                        sizeBasedFileHandling: SizeBasedFileHandling): RDD[String] = {
-      val smallPartitionedFiles = sc.parallelize(smallFiles.map(_.path).map(file => file -> ()), 2).partitionBy(createPartitioner(smallFiles, maxBytesPerPartition, minPartitions, sizeBasedFileHandling))
+      val smallPartitionedFiles = sc.parallelize(smallFiles.map(_.path).map(file => file -> ()), 2).partitionBy(createSmallFilesPartitioner(smallFiles, maxBytesPerPartition, minPartitions, sizeBasedFileHandling))
       val hadoopConf = _hadoopConf
       smallPartitionedFiles.mapPartitions { files =>
         val conf = hadoopConf.value.foldLeft(new Configuration()) { case (acc, (k, v)) => acc.set(k, v); acc }
@@ -292,13 +304,54 @@ object SparkContextUtils {
               println(s"Failed to read resource from '$path': ${ex.getMessage} -- ${ex.getStackTraceString}")
               throw new Exception(s"Failed to read resource from '$path': ${ex.getMessage} -- ${ex.getStackTraceString}")
           } finally {
-            try {
-              inputStream.close()
-            } catch {
-              case NonFatal(ex) =>
-                println(s"Fail to close resource from '$path': ${ex.getMessage} -- ${ex.getStackTraceString}")
-            }
+            close(inputStream, path)
           }
+        }
+      }
+    }
+
+    def readCompressedBigFile(file: HadoopFile, maxBytesPerPartition: Long, minPartitions: Int,
+                              sizeBasedFileHandling: SizeBasedFileHandling, sampleCount: Int = 100): RDD[String] = {
+      val estimatedSize = sizeBasedFileHandling.estimatedSize(file)
+      val totalSlices = (estimatedSize / maxBytesPerPartition + 1).toInt
+      val slices = (0 until totalSlices).map(BigFileSlice.apply)
+
+      val partitioner = {
+        val indexedPartitions: Map[Any, Int] = slices.map(s => s -> s.index).toMap
+        IndexedPartitioner(totalSlices, indexedPartitions)
+      }
+      val hadoopConf = _hadoopConf
+
+      val partitionedSlices = sc.parallelize(slices.map(s => s -> ()), 2).partitionBy(partitioner)
+
+      partitionedSlices.mapPartitions { slices =>
+        val conf = hadoopConf.value.foldLeft(new Configuration()) { case (acc, (k, v)) => acc.set(k, v); acc }
+        val codecFactory = new CompressionCodecFactory(conf)
+        val hadoopPath = new Path(file.path)
+        val fileSystem = hadoopPath.getFileSystem(conf)
+        slices.flatMap { case (slice, _) =>
+          val inputStream = Option(codecFactory.getCodec(hadoopPath)) match {
+            case Some(compression) => compression.createInputStream(fileSystem.open(hadoopPath))
+            case None => fileSystem.open(hadoopPath)
+          }
+          val lines = Source.fromInputStream(inputStream)(Codec.UTF8).getLines()
+
+          val lineSample = lines.take(sampleCount).toList
+          val linesPerSlice = {
+            val sampleSize = lineSample.map(_.size).sum
+            val estimatedAverageLineSize = Math.round(sampleSize / sampleCount.toFloat)
+            val estimatedTotalLines = Math.round(estimatedSize / estimatedAverageLineSize.toFloat)
+            estimatedTotalLines / totalSlices + 1
+          }
+
+          val linesAfterSeek = (lineSample.toIterator ++ lines).drop(linesPerSlice * slice.index)
+
+          val finalLines = if (slice.index + 1 == totalSlices) // last slice, read until the end
+            linesAfterSeek
+          else
+            linesAfterSeek.take(linesPerSlice)
+
+          AutoCloseableIterator.wrap(finalLines, () => close(inputStream, s"${file.path}, slice $slice"))
         }
       }
     }
@@ -315,17 +368,14 @@ object SparkContextUtils {
       def read(file: HadoopFile, conf: Configuration) = sc.newAPIHadoopFile[LongWritable, Text, TextInputFormat](conf = conf, fClass = classOf[TextInputFormat],
         kClass = classOf[LongWritable], vClass = classOf[Text], path = file.path).map(pair => pair._2.toString)
 
-      val confCompressed = confWith(maxBytesPerPartition / sizeBasedFileHandling.averageEstimatedCompressionRatio)
       val confUncompressed = confWith(maxBytesPerPartition)
 
       val union = new UnionRDD(sc, bigFiles.map { file =>
 
-        val conf = if (sizeBasedFileHandling.isCompressed(file))
-          confCompressed
+        if (sizeBasedFileHandling.isCompressed(file))
+          readCompressedBigFile(file, maxBytesPerPartition, minPartitions, sizeBasedFileHandling)
         else
-          confUncompressed
-
-        read(file, conf)
+          read(file, confUncompressed)
       })
 
       if (union.partitions.size < minPartitions)
@@ -348,7 +398,7 @@ object SparkContextUtils {
         readBigFiles(bigFiles, maxBytesPerPartition, minPartitions, sizeBasedFileHandling))
     }
 
-    private def createPartitioner(files: List[HadoopFile], maxBytesPerPartition: Long, minPartitions: Long, sizeBasedFileHandling: SizeBasedFileHandling): Partitioner = {
+    private def createSmallFilesPartitioner(files: List[HadoopFile], maxBytesPerPartition: Long, minPartitions: Long, sizeBasedFileHandling: SizeBasedFileHandling): Partitioner = {
       implicit val ordering: Ordering[HadoopFilePartition] = Ordering.by(p => -p.size) // Small partitions come first (highest priority)
 
       val pq: mutable.PriorityQueue[HadoopFilePartition] = mutable.PriorityQueue.empty
