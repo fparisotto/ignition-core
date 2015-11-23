@@ -19,8 +19,6 @@ libraryDependencies += ("org.apache.spark" %% "spark-core" % "1.5.1" % "provided
 
 libraryDependencies += ("org.apache.hadoop" % "hadoop-client" % "2.0.0-cdh4.7.1" % "provided")
 
-libraryDependencies += "nl.basjes.hadoop" % "splittablegzip" % "1.2"
-
 libraryDependencies += "org.scalatest" % "scalatest_2.10" % "2.2.4"
 
 libraryDependencies += "org.scalaj" %% "scalaj-http" % "0.3.16"
