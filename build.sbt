@@ -33,6 +33,8 @@ libraryDependencies += "joda-time" % "joda-time" % "2.7"
 
 libraryDependencies += "org.joda" % "joda-convert" % "1.7"
 
+libraryDependencies += "com.amazonaws" % "aws-java-sdk" % "1.9.6"
+
 resolvers += "Akka Repository" at "http://repo.akka.io/releases/"
 
 resolvers += "Sonatype OSS Releases" at "http://oss.sonatype.org/content/repositories/releases/"
