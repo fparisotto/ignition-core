@@ -10,8 +10,8 @@ object AutoCloseableIterator {
     override def naiveClose() = {}
   }
 
-  def wrap[T](iterator: Iterator[T], close: () => Unit = () => ()): AutoCloseableIterator[T] = new AutoCloseableIterator[T] {
-    override def naiveClose(): Unit = close()
+  def wrap[T](iterator: Iterator[T], doClose: () => Unit = () => ()): AutoCloseableIterator[T] = new AutoCloseableIterator[T] {
+    override def naiveClose(): Unit = doClose()
     override def naiveHasNext(): Boolean = iterator.hasNext
     override def naiveNext(): T = iterator.next()
   }
