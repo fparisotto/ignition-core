@@ -26,7 +26,7 @@ trait AutoCloseableIterator[T] extends Iterator[T] with AutoCloseable {
   var closed = false
 
   // hasNext closes the iterator and handles the case where it is already closed
-  override def hasNext(): Boolean = if (closed)
+  override def hasNext: Boolean = if (closed)
     false
   else {
     val naiveResult = try {
@@ -47,7 +47,7 @@ trait AutoCloseableIterator[T] extends Iterator[T] with AutoCloseable {
   // next closes the iterator and handles the case where it is already closed
   override def next(): T = if (closed)
     throw new RuntimeException("Trying to get next element on a closed iterator")
-  else if (hasNext())
+  else if (hasNext)
     try {
       naiveNext
     } catch {
