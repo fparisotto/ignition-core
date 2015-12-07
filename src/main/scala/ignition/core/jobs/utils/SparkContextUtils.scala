@@ -291,7 +291,7 @@ object SparkContextUtils {
                        maxBytesPerPartition: Long,
                        minPartitions: Int,
                        sizeBasedFileHandling: SizeBasedFileHandling): RDD[String] = {
-      val smallPartitionedFiles = sc.parallelize(smallFiles.map(_.path).map(file => file -> Unit), 2).partitionBy(createSmallFilesPartitioner(smallFiles, maxBytesPerPartition, minPartitions, sizeBasedFileHandling))
+      val smallPartitionedFiles = sc.parallelize(smallFiles.map(_.path).map(file => file -> null), 2).partitionBy(createSmallFilesPartitioner(smallFiles, maxBytesPerPartition, minPartitions, sizeBasedFileHandling))
       val hadoopConf = _hadoopConf
       smallPartitionedFiles.mapPartitions { files =>
         val conf = hadoopConf.value.foldLeft(new Configuration()) { case (acc, (k, v)) => acc.set(k, v); acc }
@@ -328,7 +328,7 @@ object SparkContextUtils {
       }
       val hadoopConf = _hadoopConf
 
-      val partitionedSlices = sc.parallelize(slices.map(s => s -> Unit), 2).partitionBy(partitioner)
+      val partitionedSlices = sc.parallelize(slices.map(s => s -> null), 2).partitionBy(partitioner)
 
       partitionedSlices.mapPartitions { slices =>
         val conf = hadoopConf.value.foldLeft(new Configuration()) { case (acc, (k, v)) => acc.set(k, v); acc }
