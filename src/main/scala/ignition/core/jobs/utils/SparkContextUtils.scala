@@ -33,7 +33,7 @@ object SparkContextUtils {
       inputStream.close()
     } catch {
       case NonFatal(ex) =>
-        println(s"Fail to close resource from '$path': ${ex.getMessage} -- ${ex.getFullStacktraceString}")
+        println(s"Fail to close resource from '$path': ${ex.getMessage} -- ${ex.getFullStackTraceString}")
     }
   }
 
@@ -307,8 +307,8 @@ object SparkContextUtils {
             Source.fromInputStream(inputStream)(Codec.UTF8).getLines().foldLeft(ArrayBuffer.empty[String])(_ += _)
           } catch {
             case NonFatal(ex) =>
-              println(s"Failed to read resource from '$path': ${ex.getMessage} -- ${ex.getFullStacktraceString}")
-              throw new Exception(s"Failed to read resource from '$path': ${ex.getMessage} -- ${ex.getFullStacktraceString}")
+              println(s"Failed to read resource from '$path': ${ex.getMessage} -- ${ex.getFullStackTraceString}")
+              throw new Exception(s"Failed to read resource from '$path': ${ex.getMessage} -- ${ex.getFullStackTraceString}")
           } finally {
             close(inputStream, path)
           }
