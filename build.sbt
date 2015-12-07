@@ -4,7 +4,7 @@ version := "1.0"
 
 scalaVersion := "2.10.4"
 
-scalacOptions ++= Seq("-unchecked", "-deprecation", "-feature", "-Xfatal-warnings")
+scalacOptions ++= Seq("-unchecked", "-deprecation", "-feature", "-Xfatal-warnings", "-Xlint", "-Ywarn-dead-code")
 
 ideaExcludeFolders += ".idea"
 
@@ -19,9 +19,7 @@ libraryDependencies += ("org.apache.spark" %% "spark-core" % "1.5.1" % "provided
 
 libraryDependencies += ("org.apache.hadoop" % "hadoop-client" % "2.0.0-cdh4.7.1" % "provided")
 
-libraryDependencies += "org.scalatest" % "scalatest_2.10" % "2.2.4"
-
-libraryDependencies += "org.scalaj" %% "scalaj-http" % "0.3.16"
+libraryDependencies += "org.scalatest" %% "scalatest" % "2.2.4"
 
 libraryDependencies += "org.scalaz" %% "scalaz-core" % "7.0.6"
 
@@ -34,6 +32,8 @@ libraryDependencies += "joda-time" % "joda-time" % "2.7"
 libraryDependencies += "org.joda" % "joda-convert" % "1.7"
 
 libraryDependencies += "com.amazonaws" % "aws-java-sdk" % "1.9.6"
+
+libraryDependencies += "commons-lang" % "commons-lang" % "2.6"
 
 resolvers += "Akka Repository" at "http://repo.akka.io/releases/"
 
