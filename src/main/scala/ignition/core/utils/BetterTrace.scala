@@ -1,5 +1,6 @@
 package ignition.core.utils
 
+import ignition.core.utils.ExceptionUtils._
 // Used mainly to augment scalacheck traces in scalatest
 trait BetterTrace {
   def fail(message: String): Nothing
@@ -7,7 +8,7 @@ trait BetterTrace {
     try {
       block
     } catch {
-      case t: Throwable => fail(s"${t.getMessage}: ${t.getStackTraceString}")
+      case t: Throwable => fail(s"${t.getMessage}: ${t.getFullStacktraceString}")
     }
 
 }
