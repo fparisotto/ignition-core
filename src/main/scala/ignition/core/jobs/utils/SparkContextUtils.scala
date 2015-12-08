@@ -351,7 +351,7 @@ object SparkContextUtils {
                                      minPartitions: Int,
                                      sizeBasedFileHandling: SizeBasedFileHandling = SizeBasedFileHandling())
                                     (implicit dateExtractor: PathDateExtractor): RDD[String] = {
-      val foundFiles = paths.flatMap(smartList(_)).filter(_.size > 0)
+      val foundFiles = paths.flatMap(smartList(_))
       parallelReadTextFiles(foundFiles, maxBytesPerPartition = maxBytesPerPartition, minPartitions = minPartitions, sizeBasedFileHandling = sizeBasedFileHandling)
     }
 
@@ -361,11 +361,12 @@ object SparkContextUtils {
                               sizeBasedFileHandling: SizeBasedFileHandling = SizeBasedFileHandling(),
                               synchLocally: Option[String] = None,
                               forceSynch: Boolean = false): RDD[String] = {
+      val filteredFiles = files.filter(_.size > 0)
       if (synchLocally.isDefined)
-        doSync(files, maxBytesPerPartition = maxBytesPerPartition, minPartitions = minPartitions, synchLocally = synchLocally.get,
+        doSync(filteredFiles, maxBytesPerPartition = maxBytesPerPartition, minPartitions = minPartitions, synchLocally = synchLocally.get,
           sizeBasedFileHandling = sizeBasedFileHandling, forceSynch = forceSynch)
       else {
-        val (bigFiles, smallFiles) = files.partition(f => sizeBasedFileHandling.isBig(f, maxBytesPerPartition))
+        val (bigFiles, smallFiles) = filteredFiles.partition(f => sizeBasedFileHandling.isBig(f, maxBytesPerPartition))
         sc.union(
           readSmallFiles(smallFiles, maxBytesPerPartition, minPartitions, sizeBasedFileHandling),
           readBigFiles(bigFiles, maxBytesPerPartition, minPartitions, sizeBasedFileHandling))
