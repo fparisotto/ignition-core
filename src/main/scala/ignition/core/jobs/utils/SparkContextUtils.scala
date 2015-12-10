@@ -486,12 +486,16 @@ object SparkContextUtils {
           case Failure(_) => Left(path)
         }
 
-      s3ListCommonPrefixes(bucket, prefix, delimiter).map(classifyPath).flatMap {
-        case Left(prefixWithoutDate) => s3NarrowPaths(bucket, prefixWithoutDate, delimiter, inclusiveStartDate,
-          startDate, inclusiveEndDate, endDate, ignoreHours)
-        case Right((prefixWithDate, date)) if isGoodDate(date) => List(s"s3n://$bucket/$prefixWithDate")
-        case Right(_) => List.empty
-      }
+      val commonPrefixes = s3ListCommonPrefixes(bucket, prefix, delimiter).map(classifyPath)
+
+      if (commonPrefixes.isEmpty)
+        Stream(s"s3n://$bucket/$prefix")
+      else
+        commonPrefixes.toStream.flatMap {
+          case Left(prefixWithoutDate) => s3NarrowPaths(bucket, prefixWithoutDate, delimiter, inclusiveStartDate, startDate, inclusiveEndDate, endDate, ignoreHours)
+          case Right((prefixWithDate, date)) if isGoodDate(date) => Stream(s"s3n://$bucket/$prefixWithDate")
+          case Right(_) => Stream.empty
+        }
     }
 
     private def s3List(path: String,
