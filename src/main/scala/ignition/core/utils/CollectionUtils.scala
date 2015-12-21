@@ -6,7 +6,32 @@ import scalaz.Validation
 
 object CollectionUtils {
 
+
+
+  implicit class SeqImprovements[A](xs: Seq[A]) {
+    def orElseIfEmpty[B >: A](alternative: => Seq[B]): Seq[B] = {
+      if (xs.nonEmpty)
+        xs
+      else
+        alternative
+    }
+  }
+
   implicit class TraversableOnceImprovements[A](xs: TraversableOnce[A]) {
+    def maxOption(implicit cmp: Ordering[A]): Option[A] = {
+      if (xs.isEmpty)
+        None
+      else
+        Option(xs.max)
+    }
+
+    def minOption(implicit cmp: Ordering[A]): Option[A] = {
+      if (xs.isEmpty)
+        None
+      else
+        Option(xs.min)
+    }
+
     def maxByOption[B](f: A => B)(implicit cmp: Ordering[B]): Option[A] = {
       if (xs.isEmpty)
         None
@@ -64,6 +89,7 @@ object CollectionUtils {
       }
       builder.result
     }
+
 
   }
 
