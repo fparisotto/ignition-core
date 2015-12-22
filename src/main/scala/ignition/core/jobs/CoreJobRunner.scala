@@ -13,9 +13,11 @@ object CoreJobRunner {
 
   // Used to provide contextual logging
   def setLoggingContextValues(config: RunnerConfig): Unit = {
-    org.slf4j.MDC.put("setupName", config.setupName)
-    org.slf4j.MDC.put("tag", config.tag)
-    org.slf4j.MDC.put("user", config.user)
+    Try { // yes, this may fail but we don't want everything to shut down
+      org.slf4j.MDC.put("setupName", config.setupName)
+      org.slf4j.MDC.put("tag", config.tag)
+      org.slf4j.MDC.put("user", config.user)
+    }
   }
 
   case class RunnerConfig(setupName: String = "nosetup",

@@ -4,7 +4,7 @@ version := "1.0"
 
 scalaVersion := "2.10.4"
 
-scalacOptions ++= Seq("-unchecked", "-deprecation", "-feature", "-Xfatal-warnings", "-Xlint", "-Ywarn-dead-code")
+scalacOptions ++= Seq("-unchecked", "-deprecation", "-feature", "-Xfatal-warnings", "-Xlint", "-Ywarn-dead-code", "-Xmax-classfile-name", "130")
 
 ideaExcludeFolders += ".idea"
 
