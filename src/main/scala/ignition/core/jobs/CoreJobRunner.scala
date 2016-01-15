@@ -13,10 +13,13 @@ object CoreJobRunner {
 
   // Used to provide contextual logging
   def setLoggingContextValues(config: RunnerConfig): Unit = {
-    Try { // yes, this may fail but we don't want everything to shut down
+    try { // yes, this may fail but we don't want everything to shut down
       org.slf4j.MDC.put("setupName", config.setupName)
       org.slf4j.MDC.put("tag", config.tag)
       org.slf4j.MDC.put("user", config.user)
+    } catch {
+      case e: Throwable =>
+        // cry
     }
   }
 
