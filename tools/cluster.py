@@ -436,6 +436,9 @@ def job_run(cluster_name, job_name, job_mem,
                src_local=remote_hook_local,
                remote_path=with_leading_slash(remote_path))
 
+    if job_name == "zeppelin":
+         subprocess.Popen(["xdg-open", "http://{master}:8081".format(master=master)])
+
     log.info('Will run job in remote host')
     if disable_tmux:
         ssh_call(user=remote_user, host=master, key_file=key_file, args=[non_tmux_arg], allocate_terminal=False)
