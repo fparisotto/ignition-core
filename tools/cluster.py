@@ -23,6 +23,7 @@ import logging
 import getpass
 import json
 import glob
+import webbrowser
 
 
 log = logging.getLogger()
@@ -435,6 +436,9 @@ def job_run(cluster_name, job_name, job_mem,
                key_file=key_file,
                src_local=remote_hook_local,
                remote_path=with_leading_slash(remote_path))
+
+    if job_name == "zeppelin":
+         webbrowser.open("http://{master}:8081".format(master=master))
 
     log.info('Will run job in remote host')
     if disable_tmux:

@@ -49,6 +49,23 @@ on_trap_exit() {
     rm -f "${RUNNING_FILE}"
 }
 
+install_and_run_zeppelin() {
+    if [[ ! -d "zeppelin" ]]; then
+        wget "http://www.us.apache.org/dist/incubator/zeppelin/0.5.6-incubating/zeppelin-0.5.6-incubating-bin-all.tgz" -O zeppelin.tar.gz
+        mkdir zepplin
+        tar xvzf zeppelin.tar.gz -C zeppelin --strip-components 1 > /tmp/zeppelin_install.log
+    fi
+    if [[ -f "zeppelin/bin/zeppelin.sh" ]]; then
+        export MASTER="${JOB_MASTER}"
+        export ZEPPELIN_PORT="8081"
+        export SPARK_HOME="/root/spark"
+        export SPARK_SUBMIT_OPTIONS="--jars ${JAR_PATH}"
+        sudo -E zeppelin/bin/zeppelin.sh
+    else
+        notify_error_and_exit "Zepellin installation not found"
+    fi
+}
+
 
 trap "on_trap_exit" EXIT
 
@@ -74,10 +91,11 @@ if [[ "${USE_YARN}" == "yes" ]]; then
     export SPARK_WORKER_MEMORY=${SPARK_MEM_PARAM}
 fi
 
-
 if [[ "${JOB_NAME}" == "shell" ]]; then
     export ADD_JARS=${JAR_PATH}
     sudo -E ${SPARK_HOME}/bin/spark-shell || notify_error_and_exit "Execution failed for shell"
+elif [[ "${JOB_NAME}" == "zeppelin" ]]; then
+    install_and_run_zeppelin
 else
     JOB_OUTPUT="${JOB_CONTROL_DIR}/output.log"
     tail -F "${JOB_OUTPUT}" &
