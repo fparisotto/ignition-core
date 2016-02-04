@@ -57,6 +57,8 @@ object RDDUtils {
     def incrementCounterIf(cond: (V) => Boolean, acc: spark.Accumulator[Int]): RDD[V] = {
       rdd.map(x => { if (cond(x)) acc += 1; x })
     }
+
+    def filterNot(p: V => Boolean): RDD[V] = rdd.filter(!p(_))
   }
 
   implicit class PairRDDImprovements[K: ClassTag, V: ClassTag](rdd: RDD[(K, V)]) {
