@@ -323,7 +323,7 @@ def launch(cluster_name, slaves,
     raise CommandError('Failed to created cluster {} after failures'.format(cluster_name))
 
 
-def destroy(cluster_name, delete_groups=True, region=default_region):
+def destroy(cluster_name, delete_groups=False, region=default_region):
     delete_sg_param = ['--delete-groups'] if delete_groups else []
 
     ec2_script_path = chdir_to_ec2_script_and_get_path()
