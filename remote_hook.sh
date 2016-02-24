@@ -52,14 +52,14 @@ on_trap_exit() {
 install_and_run_zeppelin() {
     if [[ ! -d "zeppelin" ]]; then
         wget "http://www.us.apache.org/dist/incubator/zeppelin/0.5.6-incubating/zeppelin-0.5.6-incubating-bin-all.tgz" -O zeppelin.tar.gz
-        mkdir zepplin
+        mkdir zeppelin
         tar xvzf zeppelin.tar.gz -C zeppelin --strip-components 1 > /tmp/zeppelin_install.log
     fi
     if [[ -f "zeppelin/bin/zeppelin.sh" ]]; then
         export MASTER="${JOB_MASTER}"
         export ZEPPELIN_PORT="8081"
         export SPARK_HOME="/root/spark"
-        export SPARK_SUBMIT_OPTIONS="--jars ${JAR_PATH}"
+        export SPARK_SUBMIT_OPTIONS="--jars ${JAR_PATH} --runner-executor-memory ${SPARK_MEM_PARAM}"
         sudo -E zeppelin/bin/zeppelin.sh
     else
         notify_error_and_exit "Zepellin installation not found"
