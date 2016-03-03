@@ -45,5 +45,10 @@ class CollectionUtilsSpec extends FlatSpec with ShouldMatchers {
     Seq(1, 3, 2).minOption shouldBe Some(1)
   }
 
+  it should "provide mostFrequentOption" in {
+    Seq.empty[String].mostFrequentOption shouldBe None
+    Seq("a", "b", "b", "c", "a", "b").mostFrequentOption shouldBe Option("b")
+  }
+
 
 }
