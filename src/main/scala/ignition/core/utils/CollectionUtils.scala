@@ -15,6 +15,10 @@ object CollectionUtils {
       else
         alternative
     }
+    
+    def mostFrequentOption: Option[A] = {
+      xs.groupBy(identity).maxByOption(_._2.size).map(_._1)
+    }
   }
 
   implicit class TraversableOnceImprovements[A](xs: TraversableOnce[A]) {
@@ -45,6 +49,7 @@ object CollectionUtils {
       else
         Option(xs.minBy(f))
     }
+    
   }
 
 
