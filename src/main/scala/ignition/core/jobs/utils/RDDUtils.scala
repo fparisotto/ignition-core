@@ -29,6 +29,12 @@ object RDDUtils {
     }
   }
 
+  implicit class SetRDDImprovements[V: ClassTag](rdd: RDD[Set[V]]) {
+    def flatten: RDD[V] = {
+      rdd.flatMap(x => x)
+    }
+  }
+
   implicit class ValidatedRDDImprovements[A: ClassTag, B: ClassTag](rdd: RDD[Validation[A, B]]) {
 
     def mapSuccess(f: B => Validation[A, B]): RDD[Validation[A, B]] = {
