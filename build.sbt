@@ -6,10 +6,6 @@ scalaVersion := "2.10.4"
 
 scalacOptions ++= Seq("-unchecked", "-deprecation", "-feature", "-Xfatal-warnings", "-Xlint", "-Ywarn-dead-code", "-Xmax-classfile-name", "130")
 
-ideaExcludeFolders += ".idea"
-
-ideaExcludeFolders += ".idea_modules"
-
 // Because we can't run two spark contexts on same VM
 parallelExecution in Test := false
 
