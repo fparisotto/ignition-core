@@ -1,5 +1,7 @@
 package ignition.core.utils
 
+import ignition.core.utils.CollectionUtils._
+
 object IntBag {
   def from(numbers: TraversableOnce[Long]): IntBag = {
     val histogram = scala.collection.mutable.HashMap.empty[Long, Long]
@@ -19,15 +21,17 @@ case class IntBag(histogram: collection.Map[Long, Long]) {
 
 
   def median: Option[Long] = {
-    if (histogram.nonEmpty) {
+    percentile(50)
+  }
+
+  def percentile(n: Double): Option[Long] = {
+    require(n > 0 && n <= 100)
+    histogram.keys.maxOption.flatMap { max =>
       val total = histogram.values.sum
-      val half = total / 2
-      val max = histogram.keys.max
+      val position = total * (n / 100)
 
       val accumulatedFrequency = (0L to max).scanLeft(0L) { case (sumFreq, k) => sumFreq + histogram.getOrElse(k, 0L) }.zipWithIndex
-      accumulatedFrequency.collectFirst { case (sum, k) if sum >= half => k }
-    } else {
-      None
+      accumulatedFrequency.collectFirst { case (sum, k) if sum >= position => k - 1 }
     }
   }
 
@@ -38,5 +42,13 @@ case class IntBag(histogram: collection.Map[Long, Long]) {
       Option(sum / count)
     } else
       None
+  }
+
+  def min: Option[Long] = {
+    histogram.keys.minOption
+  }
+
+  def max: Option[Long] = {
+    histogram.keys.maxOption
   }
 }
