@@ -93,7 +93,7 @@ fi
 
 if [[ "${JOB_NAME}" == "shell" ]]; then
     export ADD_JARS=${JAR_PATH}
-    sudo -E ${SPARK_HOME}/bin/spark-shell || notify_error_and_exit "Execution failed for shell"
+    sudo -E ${SPARK_HOME}/bin/spark-shell --driver-memory "${DRIVER_HEAP_SIZE}" --driver-java-options "-Djava.io.tmpdir=/mnt -verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps" --executor-memory "${SPARK_MEM_PARAM}" || notify_error_and_exit "Execution failed for shell"
 elif [[ "${JOB_NAME}" == "zeppelin" ]]; then
     install_and_run_zeppelin
 else
