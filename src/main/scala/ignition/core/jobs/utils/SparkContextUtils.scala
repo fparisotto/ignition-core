@@ -293,28 +293,33 @@ object SparkContextUtils {
         val hadoopPath = new Path(file.path)
         val fileSystem = hadoopPath.getFileSystem(conf)
         slices.flatMap { case (slice, _) =>
-          val inputStream = Option(codecFactory.getCodec(hadoopPath)) match {
-            case Some(compression) => compression.createInputStream(fileSystem.open(hadoopPath))
-            case None => fileSystem.open(hadoopPath)
+          try {
+            val inputStream = Option(codecFactory.getCodec(hadoopPath)) match {
+              case Some(compression) => compression.createInputStream(fileSystem.open(hadoopPath))
+              case None => fileSystem.open(hadoopPath)
+            }
+            val lines = Source.fromInputStream(inputStream)(Codec.UTF8).getLines()
+
+            val lineSample = lines.take(sampleCount).toList
+            val linesPerSlice = {
+              val sampleSize = lineSample.map(_.size).sum
+              val estimatedAverageLineSize = Math.round(sampleSize / sampleCount.toFloat)
+              val estimatedTotalLines = Math.round(estimatedSize / estimatedAverageLineSize.toFloat)
+              estimatedTotalLines / totalSlices + 1
+            }
+
+            val linesAfterSeek = (lineSample.toIterator ++ lines).drop(linesPerSlice * slice.index)
+
+            val finalLines = if (slice.index + 1 == totalSlices) // last slice, read until the end
+              linesAfterSeek
+            else
+              linesAfterSeek.take(linesPerSlice)
+
+            AutoCloseableIterator.wrap(finalLines, () => close(inputStream, s"${file.path}, slice $slice"))
+          } catch {
+            case NonFatal(e) =>
+              throw new Exception(s"Error on read compressed big file, slice=$slice, file=$file", e)
           }
-          val lines = Source.fromInputStream(inputStream)(Codec.UTF8).getLines()
-
-          val lineSample = lines.take(sampleCount).toList
-          val linesPerSlice = {
-            val sampleSize = lineSample.map(_.size).sum
-            val estimatedAverageLineSize = Math.round(sampleSize / sampleCount.toFloat)
-            val estimatedTotalLines = Math.round(estimatedSize / estimatedAverageLineSize.toFloat)
-            estimatedTotalLines / totalSlices + 1
-          }
-
-          val linesAfterSeek = (lineSample.toIterator ++ lines).drop(linesPerSlice * slice.index)
-
-          val finalLines = if (slice.index + 1 == totalSlices) // last slice, read until the end
-            linesAfterSeek
-          else
-            linesAfterSeek.take(linesPerSlice)
-
-          AutoCloseableIterator.wrap(finalLines, () => close(inputStream, s"${file.path}, slice $slice"))
         }
       }
     }
