@@ -361,7 +361,7 @@ object SparkContextUtils {
     }
 
     def parallelReadTextFiles(files: List[HadoopFile],
-                              maxBytesPerPartition: Long = 256 * 1000 * 1000,
+                              maxBytesPerPartition: Long = 128 * 1000 * 1000,
                               minPartitions: Int = 100,
                               sizeBasedFileHandling: SizeBasedFileHandling = SizeBasedFileHandling(),
                               synchLocally: Option[String] = None,
@@ -639,7 +639,7 @@ object SparkContextUtils {
                                       ignoreMalformedDates: Boolean = false,
                                       endsWith: Option[String] = None,
                                       predicate: HadoopFile => Boolean = _ => true,
-                                      maxBytesPerPartition: Long = 256 * 1000 * 1000,
+                                      maxBytesPerPartition: Long = 128 * 1000 * 1000,
                                       minPartitions: Int = 100,
                                       sizeBasedFileHandling: SizeBasedFileHandling = SizeBasedFileHandling(),
                                       minimumFiles: Int = 1,
@@ -660,7 +660,7 @@ object SparkContextUtils {
     private def doSync(hadoopFiles: List[HadoopFile],
                        synchLocally: String,
                        forceSynch: Boolean,
-                       maxBytesPerPartition: Long = 256 * 1000 * 1000,
+                       maxBytesPerPartition: Long = 128 * 1000 * 1000,
                        minPartitions: Int = 100,
                        sizeBasedFileHandling: SizeBasedFileHandling = SizeBasedFileHandling()): RDD[String] = {
       require(!synchLocally.contains("*"), "Globs are not supported on the sync key")
