@@ -3,13 +3,14 @@ package ignition.core.jobs.utils
 import org.slf4j.LoggerFactory
 
 import scala.reflect._
-import org.apache.spark.rdd.{PairRDDFunctions, CoGroupedRDD, RDD}
+import org.apache.spark.rdd.{CoGroupedRDD, PairRDDFunctions, RDD}
 import org.apache.spark.SparkContext._
 import org.apache.spark.Partitioner
 import org.apache.spark
 import org.joda.time.DateTime
 import org.joda.time.format.DateTimeFormat
 
+import scala.collection.mutable
 import scalaz.{Success, Validation}
 
 object RDDUtils {
@@ -93,13 +94,14 @@ object RDDUtils {
     }
 
     def groupByKeyAndTake(n: Int): RDD[(K, List[V])] =
-      rdd.aggregateByKey(List.empty[V])(
+      rdd.aggregateByKey(mutable.ListBuffer.empty[V])(
         (lst, v) =>
           if (lst.size >= n) {
             logger.warn(s"Ignoring value '$v' due aggregation result of size '${lst.size}' is bigger than n=$n")
             lst
           } else {
-            v :: lst
+            lst += v
+            lst
           },
         (lstA, lstB) =>
           if (lstA.size >= n)
@@ -109,11 +111,14 @@ object RDDUtils {
           else {
             if (lstA.size + lstB.size > n) {
               logger.warn(s"Merging partition1=${lstA.size} with partition2=${lstB.size} and taking the first n=$n, sample1='${lstA.take(5)}', sample2='${lstB.take(5)}'")
-              (lstA ++ lstB).take(n)
-            } else
-              lstA ++ lstB
+              lstA ++= lstB
+              lstA.take(n)
+            } else {
+              lstA ++= lstB
+              lstA
+            }
           }
-      )
+      ).mapValues(_.toList)
 
     // Note: completely unoptimized. We could use instead for better performance:
     // 1) sortByKey
