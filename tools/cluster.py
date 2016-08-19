@@ -49,7 +49,7 @@ default_key_file = os.path.expanduser('~/.ssh/ignition_key.pem')
 default_ami = None # will be decided based on spark-ec2 list
 default_master_ami = None
 default_env = 'dev'
-default_spark_version = '1.5.1'
+default_spark_version = '2.0.0'
 custom_builds = {
 #    '1.5.1': 'https://s3.amazonaws.com/chaordic-ignition-public/spark-1.5.1-bin-cdh4.7.1.tgz'
 }
@@ -61,7 +61,7 @@ default_user_data = os.path.join(script_path, 'scripts', 'noop')
 default_defaults_filename = 'cluster_defaults.json'
 
 default_spark_ec2_git_repo = 'https://github.com/chaordic/spark-ec2'
-default_spark_ec2_git_branch = 'branch-1.4-merge'
+default_spark_ec2_git_branch = 'branch-2.0'
 
 
 master_post_create_commands = [
