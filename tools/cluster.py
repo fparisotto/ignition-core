@@ -227,7 +227,8 @@ def launch(cluster_name, slaves,
            spark_version=default_spark_version,
            spark_ec2_git_repo=default_spark_ec2_git_repo,
            spark_ec2_git_branch=default_spark_ec2_git_branch,
-           ami=default_ami, master_ami=default_master_ami):
+           ami=default_ami, master_ami=default_master_ami,
+           instance_profile_name=None):
 
     all_args = locals()
 
@@ -264,6 +265,8 @@ def launch(cluster_name, slaves,
         ami_params = ['--ami', ami] if ami else []
         master_ami_params = ['--master-ami', master_ami] if master_ami else []
 
+        iam_params = ['--instance-profile-name', instance_profile_name] if instance_profile_name else []
+
         spark_version = custom_builds.get(spark_version, spark_version)
 
         for i in range(retries_on_same_cluster):
@@ -292,7 +295,8 @@ def launch(cluster_name, slaves,
                                 resume_param +
                                 auth_params +
                                 ami_params +
-                                master_ami_params,
+                                master_ami_params +
+                                iam_params,
                                 timeout_total_minutes=script_timeout_total_minutes,
                                 timeout_inactivity_minutes=script_timeout_inactivity_minutes)
                 success = True
