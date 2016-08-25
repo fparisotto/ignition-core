@@ -13,21 +13,23 @@ libraryDependencies += ("org.apache.spark" %% "spark-core" % "1.5.1" % "provided
   .exclude("org.apache.hadoop", "hadoop-client")
   .exclude("org.slf4j", "slf4j-log4j12")
 
-libraryDependencies += ("org.apache.hadoop" % "hadoop-client" % "2.0.0-cdh4.7.1" % "provided")
 
-libraryDependencies += "org.scalatest" %% "scalatest" % "2.2.4"
+libraryDependencies += ("org.apache.hadoop" % "hadoop-client" % "2.7.2" % "provided")
+
+libraryDependencies += ("org.apache.hadoop" % "hadoop-aws" % "2.7.2")
+  .exclude("org.apache.htrace", "htrace-core")
+  .exclude("commons-beanutils", "commons-beanutils")
+  .exclude("org.slf4j", "slf4j-log4j12")
+
+libraryDependencies += "org.scalatest" %% "scalatest" % "3.0.0"
 
 libraryDependencies += "org.scalaz" %% "scalaz-core" % "7.0.6"
 
 libraryDependencies += "com.github.scopt" %% "scopt" % "3.2.0"
 
-libraryDependencies += "net.java.dev.jets3t" % "jets3t" % "0.7.1"
-
-libraryDependencies += "joda-time" % "joda-time" % "2.7"
+libraryDependencies += "joda-time" % "joda-time" % "2.9.4"
 
 libraryDependencies += "org.joda" % "joda-convert" % "1.7"
-
-libraryDependencies += "com.amazonaws" % "aws-java-sdk" % "1.9.6"
 
 libraryDependencies += "commons-lang" % "commons-lang" % "2.6"
 
