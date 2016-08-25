@@ -3,7 +3,7 @@ package ignition.core.utils
 import java.util.Properties
 
 import org.jets3t.service.impl.rest.httpclient.RestS3Service
-import org.jets3t.service.model.S3Object
+import org.jets3t.service.model.{S3Object, StorageObject}
 import org.jets3t.service.security.AWSCredentials
 import org.jets3t.service.{Constants, Jets3tProperties}
 
@@ -36,7 +36,7 @@ class S3Client {
     service.getObject(bucket, key, null, null, null, null, null, null)
   }
 
-  def list(bucket: String, key: String): Array[S3Object] = {
+  def list(bucket: String, key: String): Array[StorageObject] = {
     service.listObjectsChunked(bucket, key, null, 99999L, null, true).getObjects
   }
 
