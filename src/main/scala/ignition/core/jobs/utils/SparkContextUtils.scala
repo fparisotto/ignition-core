@@ -148,7 +148,7 @@ object SparkContextUtils {
       val filesToOutput = 1500
       def mapPaths(actionWhenNeedsSynching: (String, String) => Unit): Seq[String] = {
         paths.map(p => {
-          val hdfsPath = p.replace("s3n://", hdfsPathPrefix)
+          val hdfsPath = p.replaceFirst("s3(a|n)://", hdfsPathPrefix)
           if (forceSynch || getStatus(hdfsPath, false).isEmpty || getStatus(s"$hdfsPath/*", true).filterNot(_.isDirectory).size != filesToOutput) {
             val _hdfsPath = new Path(hdfsPath)
             actionWhenNeedsSynching(p, hdfsPath)
@@ -486,7 +486,7 @@ object SparkContextUtils {
       }
 
       def classifyPath(path: String): Either[String, (String, DateTime)] =
-        Try(pathDateExtractor.extractFromPath(s"s3n://$bucket/$path")) match {
+        Try(pathDateExtractor.extractFromPath(s"s3a://$bucket/$path")) match {
           case Success(date) => Right(path -> date)
           case Failure(_) => Left(path)
         }
@@ -494,11 +494,11 @@ object SparkContextUtils {
       val commonPrefixes = s3ListCommonPrefixes(bucket, prefix, delimiter).map(classifyPath)
 
       if (commonPrefixes.isEmpty)
-        Stream(s"s3n://$bucket/$prefix")
+        Stream(s"s3a://$bucket/$prefix")
       else
         commonPrefixes.toStream.flatMap {
           case Left(prefixWithoutDate) => s3NarrowPaths(bucket, prefixWithoutDate, delimiter, inclusiveStartDate, startDate, inclusiveEndDate, endDate, ignoreHours)
-          case Right((prefixWithDate, date)) if isGoodDate(date) => Stream(s"s3n://$bucket/$prefixWithDate")
+          case Right((prefixWithDate, date)) if isGoodDate(date) => Stream(s"s3a://$bucket/$prefixWithDate")
           case Right(_) => Stream.empty
         }
     }
@@ -511,10 +511,10 @@ object SparkContextUtils {
                        exclusionPattern: Option[String])
                       (implicit s3: AmazonS3Client, dateExtractor: PathDateExtractor): Stream[S3ObjectSummary] = {
 
-      val s3Pattern = "s3n?://([^/]+)(.+)".r
+      val s3Pattern = "s3(a|n)?://([^/]+)(.+)".r
 
       def extractBucketAndPrefix(path: String): Option[(String, String)] = path match {
-        case s3Pattern(bucket, prefix) => Option(bucket -> prefix.dropWhile(_ == '/'))
+        case s3Pattern(_, bucket, prefix) => Option(bucket -> prefix.dropWhile(_ == '/'))
         case _ => None
       }
 
@@ -615,7 +615,7 @@ object SparkContextUtils {
                   exclusionPattern: Option[String] = None)(implicit pathDateExtractor: PathDateExtractor): Stream[HadoopFile] = {
 
       def toHadoopFile(s3Object: S3ObjectSummary): HadoopFile =
-        HadoopFile(s"s3n://${s3Object.getBucketName}/${s3Object.getKey}", isDir = false, s3Object.getSize)
+        HadoopFile(s"s3a://${s3Object.getBucketName}/${s3Object.getKey}", isDir = false, s3Object.getSize)
 
       def listPath(path: String): Stream[HadoopFile] = {
         if (path.startsWith("s3")) {
