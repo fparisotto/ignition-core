@@ -567,12 +567,12 @@ object SparkContextUtils {
       def dateValidation(file: HadoopFile): Option[HadoopFile] = {
         val tryDate = extractDateFromFile(file)
         if (tryDate.isEmpty && ignoreMalformedDates)
-          None
+          Option(file)
         else {
           val date = tryDate.get
           val goodStartDate = startDate.isEmpty || (inclusiveStartDate && date.saneEqual(startDate.get) || date.isAfter(startDate.get))
           val goodEndDate = endDate.isEmpty || (inclusiveEndDate && date.saneEqual(endDate.get) || date.isBefore(endDate.get))
-          if (goodStartDate && goodEndDate) Some(file) else None
+          if (goodStartDate && goodEndDate) Option(file) else None
         }
       }
 
@@ -590,7 +590,7 @@ object SparkContextUtils {
         startDate = startDate, endDate = endDate, exclusionPattern = exclusionPattern).filter(preValidations)
 
       val filesByDate = preFilteredFiles.groupBy(extractDateFromFile).collect {
-        case (Some(date), files) => date -> files
+        case (date, files) => date.getOrElse(new DateTime(1970, 1, 1, 1, 1)) -> files
       }
 
       val posFilteredFiles =
