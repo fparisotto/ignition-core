@@ -20,7 +20,7 @@ MY_USER=$(whoami)
 # Avoids problems when another user created our control dir
 sudo mkdir -p "${JOB_CONTROL_DIR}"
 sudo chown $MY_USER "${JOB_CONTROL_DIR}"
-sudo chown -R o+rx /root
+sudo chmod -R o+rx /root
 
 
 RUNNING_FILE="${JOB_CONTROL_DIR}/RUNNING"
