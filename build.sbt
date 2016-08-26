@@ -23,6 +23,13 @@ libraryDependencies += ("org.apache.hadoop" % "hadoop-aws" % "2.7.2")
 
 libraryDependencies += "org.scalatest" %% "scalatest" % "3.0.0"
 
+libraryDependencies += ("org.apache.hadoop" % "hadoop-aws" % "2.7.2")
+  .exclude("org.apache.htrace", "htrace-core")
+  .exclude("commons-beanutils", "commons-beanutils")
+  .exclude("org.slf4j", "slf4j-log4j12")
+
+libraryDependencies += "org.scalatest" %% "scalatest" % "3.0.0"
+
 libraryDependencies += "org.scalaz" %% "scalaz-core" % "7.0.9"
 
 libraryDependencies += "com.github.scopt" %% "scopt" % "3.2.0"
