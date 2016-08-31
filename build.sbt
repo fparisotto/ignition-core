@@ -23,13 +23,6 @@ libraryDependencies += ("org.apache.hadoop" % "hadoop-aws" % "2.7.2")
 
 libraryDependencies += "org.scalatest" %% "scalatest" % "3.0.0"
 
-libraryDependencies += ("org.apache.hadoop" % "hadoop-aws" % "2.7.2")
-  .exclude("org.apache.htrace", "htrace-core")
-  .exclude("commons-beanutils", "commons-beanutils")
-  .exclude("org.slf4j", "slf4j-log4j12")
-
-libraryDependencies += "org.scalatest" %% "scalatest" % "3.0.0"
-
 libraryDependencies += "org.scalaz" %% "scalaz-core" % "7.0.9"
 
 libraryDependencies += "com.github.scopt" %% "scopt" % "3.2.0"
@@ -39,6 +32,8 @@ libraryDependencies += "joda-time" % "joda-time" % "2.9.4"
 libraryDependencies += "org.joda" % "joda-convert" % "1.7"
 
 libraryDependencies += "commons-lang" % "commons-lang" % "2.6"
+
+libraryDependencies += "org.slf4j" % "slf4j-api" % "1.7.5"
 
 resolvers += "Akka Repository" at "http://repo.akka.io/releases/"
 
