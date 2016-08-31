@@ -6,7 +6,7 @@ import scala.concurrent.{Await, Future}
 import scala.concurrent.duration._
 import scala.concurrent.ExecutionContext.Implicits.global
 
-class FutureUtilsSpec extends FlatSpec with ShouldMatchers {
+class FutureUtilsSpec extends FlatSpec with Matchers {
   "FutureUtils" should "provide toLazyIterable" in {
     val timesCalled = collection.mutable.Map.empty[Int, Int].withDefaultValue(0)
 

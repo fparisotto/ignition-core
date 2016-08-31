@@ -6,7 +6,7 @@ import org.scalatest._
 
 import scala.util.Random
 
-class RDDUtilsSpec extends FlatSpec with ShouldMatchers with SharedSparkContext {
+class RDDUtilsSpec extends FlatSpec with Matchers with SharedSparkContext {
 
   "RDDUtils" should "provide groupByKeyAndTake" in {
     (10 to 60 by 10).foreach { take =>

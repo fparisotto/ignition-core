@@ -3,7 +3,7 @@ package ignition.core.utils
 import org.scalatest._
 import CollectionUtils._
 
-class CollectionUtilsSpec extends FlatSpec with ShouldMatchers {
+class CollectionUtilsSpec extends FlatSpec with Matchers {
 
   case class MyObj(property: String, value: String)
   "CollectionUtils" should "provide distinctBy" in {
