@@ -21,7 +21,6 @@ import _root_.io.netty.util.internal.logging.{InternalLoggerFactory, Slf4JLogger
 import org.apache.spark.SparkContext
 import org.scalatest.{BeforeAndAfterAll, BeforeAndAfterEach, Suite}
 
-/** Manages a local `sc` {@link SparkContext} variable, correctly stopping it after each test. */
 trait LocalSparkContext extends BeforeAndAfterEach with BeforeAndAfterAll { self: Suite =>
 
   @transient var sc: SparkContext = _
