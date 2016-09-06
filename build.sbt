@@ -21,7 +21,7 @@ libraryDependencies += ("org.apache.hadoop" % "hadoop-aws" % "2.7.2")
   .exclude("commons-beanutils", "commons-beanutils")
   .exclude("org.slf4j", "slf4j-log4j12")
 
-libraryDependencies += "org.scalatest" %% "scalatest" % "3.0.0"
+libraryDependencies += "org.scalatest" %% "scalatest" % "2.2.4"
 
 libraryDependencies += "org.scalaz" %% "scalaz-core" % "7.0.9"
 
