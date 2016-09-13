@@ -20,6 +20,7 @@ MY_USER=$(whoami)
 # Avoids problems when another user created our control dir
 sudo mkdir -p "${JOB_CONTROL_DIR}"
 sudo chown $MY_USER "${JOB_CONTROL_DIR}"
+sudo chmod -R o+rx /root
 
 
 RUNNING_FILE="${JOB_CONTROL_DIR}/RUNNING"
@@ -92,8 +93,7 @@ if [[ "${USE_YARN}" == "yes" ]]; then
 fi
 
 if [[ "${JOB_NAME}" == "shell" ]]; then
-    export ADD_JARS=${JAR_PATH}
-    sudo -E ${SPARK_HOME}/bin/spark-shell --driver-memory "${DRIVER_HEAP_SIZE}" --driver-java-options "-Djava.io.tmpdir=/mnt -verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps" --executor-memory "${SPARK_MEM_PARAM}" || notify_error_and_exit "Execution failed for shell"
+    sudo -E ${SPARK_HOME}/bin/spark-shell --jars ${JAR_PATH} --driver-memory "${DRIVER_HEAP_SIZE}" --driver-java-options "-Djava.io.tmpdir=/mnt -verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps" --executor-memory "${SPARK_MEM_PARAM}" || notify_error_and_exit "Execution failed for shell"
 elif [[ "${JOB_NAME}" == "zeppelin" ]]; then
     install_and_run_zeppelin
 else

@@ -49,7 +49,7 @@ default_key_file = os.path.expanduser('~/.ssh/ignition_key.pem')
 default_ami = None # will be decided based on spark-ec2 list
 default_master_ami = None
 default_env = 'dev'
-default_spark_version = '1.5.1'
+default_spark_version = '2.0.0'
 custom_builds = {
 #    '1.5.1': 'https://s3.amazonaws.com/chaordic-ignition-public/spark-1.5.1-bin-cdh4.7.1.tgz'
 }
@@ -61,7 +61,7 @@ default_user_data = os.path.join(script_path, 'scripts', 'noop')
 default_defaults_filename = 'cluster_defaults.json'
 
 default_spark_ec2_git_repo = 'https://github.com/chaordic/spark-ec2'
-default_spark_ec2_git_branch = 'branch-1.4-merge'
+default_spark_ec2_git_branch = 'branch-2.0'
 
 
 master_post_create_commands = [
@@ -227,7 +227,8 @@ def launch(cluster_name, slaves,
            spark_version=default_spark_version,
            spark_ec2_git_repo=default_spark_ec2_git_repo,
            spark_ec2_git_branch=default_spark_ec2_git_branch,
-           ami=default_ami, master_ami=default_master_ami):
+           ami=default_ami, master_ami=default_master_ami,
+           instance_profile_name=None):
 
     all_args = locals()
 
@@ -264,6 +265,8 @@ def launch(cluster_name, slaves,
         ami_params = ['--ami', ami] if ami else []
         master_ami_params = ['--master-ami', master_ami] if master_ami else []
 
+        iam_params = ['--instance-profile-name', instance_profile_name] if instance_profile_name else []
+
         spark_version = custom_builds.get(spark_version, spark_version)
 
         for i in range(retries_on_same_cluster):
@@ -292,7 +295,8 @@ def launch(cluster_name, slaves,
                                 resume_param +
                                 auth_params +
                                 ami_params +
-                                master_ami_params,
+                                master_ami_params +
+                                iam_params,
                                 timeout_total_minutes=script_timeout_total_minutes,
                                 timeout_inactivity_minutes=script_timeout_inactivity_minutes)
                 success = True

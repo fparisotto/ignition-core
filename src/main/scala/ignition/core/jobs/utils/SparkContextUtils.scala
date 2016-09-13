@@ -24,10 +24,10 @@ import scala.reflect.ClassTag
 import scala.util.{Failure, Success, Try}
 import scala.util.control.NonFatal
 import ignition.core.utils.ExceptionUtils._
+import org.slf4j.LoggerFactory
 
 
 object SparkContextUtils {
-
   private case class BigFileSlice(index: Int)
 
   private case class HadoopFilePartition(size: Long, paths: Seq[String])
@@ -51,6 +51,8 @@ object SparkContextUtils {
 
   implicit class SparkContextImprovements(sc: SparkContext) {
 
+    private lazy val logger = LoggerFactory.getLogger(getClass)
+
     lazy val _hadoopConf = sc.broadcast(sc.hadoopConfiguration.iterator().map { case entry => entry.getKey -> entry.getValue }.toMap)
 
     private def getFileSystem(path: Path): FileSystem = {
@@ -73,7 +75,7 @@ object SparkContextUtils {
     }
 
     // This call is equivalent to a ls -d in shell, but won't fail if part of a path matches nothing,
-    // For instance, given path = s3n://bucket/{a,b}, it will work fine if a exists but b is missing
+    // For instance, given path = s3a://bucket/{a,b}, it will work fine if a exists but b is missing
     def sortedGlobPath(_paths: Seq[String], removeEmpty: Boolean = true): Seq[String] = {
       val paths = _paths.flatMap(path => ignition.core.utils.HadoopUtils.getPathStrings(path))
       paths.flatMap(p => getStatus(p, removeEmpty)).map(_.getPath.toString).distinct.sorted
@@ -148,7 +150,7 @@ object SparkContextUtils {
       val filesToOutput = 1500
       def mapPaths(actionWhenNeedsSynching: (String, String) => Unit): Seq[String] = {
         paths.map(p => {
-          val hdfsPath = p.replace("s3n://", hdfsPathPrefix)
+          val hdfsPath = p.replaceFirst("s3[an]://", hdfsPathPrefix)
           if (forceSynch || getStatus(hdfsPath, false).isEmpty || getStatus(s"$hdfsPath/*", true).filterNot(_.isDirectory).size != filesToOutput) {
             val _hdfsPath = new Path(hdfsPath)
             actionWhenNeedsSynching(p, hdfsPath)
@@ -286,7 +288,6 @@ object SparkContextUtils {
       val hadoopConf = _hadoopConf
 
       val partitionedSlices = sc.parallelize(slices.map(s => s -> null), 2).partitionBy(partitioner)
-
       partitionedSlices.mapPartitions { slices =>
         val conf = hadoopConf.value.foldLeft(new Configuration()) { case (acc, (k, v)) => acc.set(k, v); acc }
         val codecFactory = new CompressionCodecFactory(conf)
@@ -329,6 +330,7 @@ object SparkContextUtils {
                              minPartitions: Int,
                              sizeBasedFileHandling: SizeBasedFileHandling): RDD[String] = {
       def confWith(maxSplitSize: Long): Configuration = (_hadoopConf.value ++ Seq(
+        "mapreduce.input.fileinputformat.split.minsize" -> maxSplitSize.toString,
         "mapreduce.input.fileinputformat.split.maxsize" -> maxSplitSize.toString))
         .foldLeft(new Configuration()) { case (acc, (k, v)) => acc.set(k, v); acc }
 
@@ -486,7 +488,7 @@ object SparkContextUtils {
       }
 
       def classifyPath(path: String): Either[String, (String, DateTime)] =
-        Try(pathDateExtractor.extractFromPath(s"s3n://$bucket/$path")) match {
+        Try(pathDateExtractor.extractFromPath(s"s3a://$bucket/$path")) match {
           case Success(date) => Right(path -> date)
           case Failure(_) => Left(path)
         }
@@ -494,11 +496,11 @@ object SparkContextUtils {
       val commonPrefixes = s3ListCommonPrefixes(bucket, prefix, delimiter).map(classifyPath)
 
       if (commonPrefixes.isEmpty)
-        Stream(s"s3n://$bucket/$prefix")
+        Stream(s"s3a://$bucket/$prefix")
       else
         commonPrefixes.toStream.flatMap {
           case Left(prefixWithoutDate) => s3NarrowPaths(bucket, prefixWithoutDate, delimiter, inclusiveStartDate, startDate, inclusiveEndDate, endDate, ignoreHours)
-          case Right((prefixWithDate, date)) if isGoodDate(date) => Stream(s"s3n://$bucket/$prefixWithDate")
+          case Right((prefixWithDate, date)) if isGoodDate(date) => Stream(s"s3a://$bucket/$prefixWithDate")
           case Right(_) => Stream.empty
         }
     }
@@ -511,7 +513,7 @@ object SparkContextUtils {
                        exclusionPattern: Option[String])
                       (implicit s3: AmazonS3Client, dateExtractor: PathDateExtractor): Stream[S3ObjectSummary] = {
 
-      val s3Pattern = "s3n?://([^/]+)(.+)".r
+      val s3Pattern = "s3[an]?://([^/]+)(.+)".r
 
       def extractBucketAndPrefix(path: String): Option[(String, String)] = path match {
         case s3Pattern(bucket, prefix) => Option(bucket -> prefix.dropWhile(_ == '/'))
@@ -567,12 +569,12 @@ object SparkContextUtils {
       def dateValidation(file: HadoopFile): Option[HadoopFile] = {
         val tryDate = extractDateFromFile(file)
         if (tryDate.isEmpty && ignoreMalformedDates)
-          None
+          Option(file)
         else {
           val date = tryDate.get
           val goodStartDate = startDate.isEmpty || (inclusiveStartDate && date.saneEqual(startDate.get) || date.isAfter(startDate.get))
           val goodEndDate = endDate.isEmpty || (inclusiveEndDate && date.saneEqual(endDate.get) || date.isBefore(endDate.get))
-          if (goodStartDate && goodEndDate) Some(file) else None
+          if (goodStartDate && goodEndDate) Option(file) else None
         }
       }
 
@@ -590,7 +592,7 @@ object SparkContextUtils {
         startDate = startDate, endDate = endDate, exclusionPattern = exclusionPattern).filter(preValidations)
 
       val filesByDate = preFilteredFiles.groupBy(extractDateFromFile).collect {
-        case (Some(date), files) => date -> files
+        case (date, files) => date.getOrElse(new DateTime(1970, 1, 1, 1, 1)) -> files
       }
 
       val posFilteredFiles =
@@ -615,12 +617,12 @@ object SparkContextUtils {
                   exclusionPattern: Option[String] = None)(implicit pathDateExtractor: PathDateExtractor): Stream[HadoopFile] = {
 
       def toHadoopFile(s3Object: S3ObjectSummary): HadoopFile =
-        HadoopFile(s"s3n://${s3Object.getBucketName}/${s3Object.getKey}", isDir = false, s3Object.getSize)
+        HadoopFile(s"s3a://${s3Object.getBucketName}/${s3Object.getKey}", isDir = false, s3Object.getSize)
 
       def listPath(path: String): Stream[HadoopFile] = {
         if (path.startsWith("s3")) {
           s3List(path, inclusiveStartDate = inclusiveStartDate, startDate = startDate, inclusiveEndDate = inclusiveEndDate,
-            endDate = endDate, exclusionPattern = exclusionPattern)(amazonS3ClientFromEnvironmentVariables, pathDateExtractor ).map(toHadoopFile)
+            endDate = endDate, exclusionPattern = exclusionPattern)(amazonS3ClientFromEnvironmentVariables, pathDateExtractor).map(toHadoopFile)
         } else {
           driverListFiles(path).toStream
         }

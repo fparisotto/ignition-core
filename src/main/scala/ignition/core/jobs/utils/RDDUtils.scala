@@ -57,25 +57,10 @@ object RDDUtils {
   }
 
   implicit class RDDImprovements[V: ClassTag](rdd: RDD[V]) {
-    def incrementCounter(acc: spark.Accumulator[Int]): RDD[V] = {
-      rdd.map(x => { acc += 1; x })
-    }
-
-    def incrementCounterIf(cond: (V) => Boolean, acc: spark.Accumulator[Int]): RDD[V] = {
-      rdd.map(x => { if (cond(x)) acc += 1; x })
-    }
-
     def filterNot(p: V => Boolean): RDD[V] = rdd.filter(!p(_))
   }
 
   implicit class PairRDDImprovements[K: ClassTag, V: ClassTag](rdd: RDD[(K, V)]) {
-    def incrementCounter(acc: spark.Accumulator[Int]): RDD[(K, V)] = {
-      rdd.mapValues(x => { acc += 1; x })
-    }
-
-    def incrementCounterIf(cond: (K, V) => Boolean, acc: spark.Accumulator[Int]): RDD[(K, V)] = {
-      rdd.mapPreservingPartitions(x => { if(cond(x._1, x._2)) acc += 1; x._2 })
-    }
 
     def flatMapPreservingPartitions[U: ClassTag](f: ((K, V)) => Seq[U]): RDD[(K, U)] = {
       rdd.mapPartitions[(K, U)](kvs => {

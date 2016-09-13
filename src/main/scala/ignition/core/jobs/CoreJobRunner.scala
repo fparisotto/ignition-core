@@ -75,10 +75,13 @@ object CoreJobRunner {
 
       sparkConf.setMaster(config.master)
       sparkConf.setAppName(appName)
-      
+
+      sparkConf.set("spark.hadoop.mapred.output.committer.class", classOf[DirectOutputCommitter].getName())
+
       defaultSparkConfMap.foreach { case (k, v) => sparkConf.set(k, v) }
 
       jobConf.foreach { case (k, v) => sparkConf.set(k, v) }
+
 
       // Add logging context to driver
       setLoggingContextValues(config)

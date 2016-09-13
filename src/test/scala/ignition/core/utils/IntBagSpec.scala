@@ -4,7 +4,7 @@ import org.scalatest._
 
 import scala.util.Random
 
-class IntBagSpec extends FlatSpec with ShouldMatchers  {
+class IntBagSpec extends FlatSpec with Matchers  {
 
   "IntBag" should "be built from sequence" in {
     IntBag.from(Seq(1, 1, 2, 2, 2, 3, 4, 4, 4, 4, 4)).histogram shouldBe Map(1 -> 2, 2 -> 3, 3 -> 1, 4 -> 5)
