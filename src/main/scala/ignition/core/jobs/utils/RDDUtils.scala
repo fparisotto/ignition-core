@@ -11,6 +11,7 @@ import org.joda.time.DateTime
 import org.joda.time.format.DateTimeFormat
 
 import scala.collection.mutable
+import scala.util.Random
 import scalaz.{Success, Validation}
 
 object RDDUtils {
@@ -78,11 +79,14 @@ object RDDUtils {
       rdd.filter { case (k, v) => f.isDefinedAt(v) }.mapValues(f)
     }
 
-    def groupByKeyAndTake(n: Int): RDD[(K, List[V])] =
+    // loggingFactor: percentage of the potential logging that will be really printed
+    // Big jobs will have too much logging and my eat up cluster disk space
+    def groupByKeyAndTake(n: Int, loggingFactor: Double = 0.5): RDD[(K, List[V])] =
       rdd.aggregateByKey(mutable.ListBuffer.empty[V])(
         (lst, v) =>
           if (lst.size >= n) {
-            logger.warn(s"Ignoring value '$v' due aggregation result of size '${lst.size}' is bigger than n=$n")
+            if (Random.nextDouble() < loggingFactor)
+              logger.warn(s"Ignoring value '$v' due aggregation result of size '${lst.size}' is bigger than n=$n")
             lst
           } else {
             lst += v
@@ -95,7 +99,8 @@ object RDDUtils {
             lstB
           else {
             if (lstA.size + lstB.size > n) {
-              logger.warn(s"Merging partition1=${lstA.size} with partition2=${lstB.size} and taking the first n=$n, sample1='${lstA.take(5)}', sample2='${lstB.take(5)}'")
+              if (Random.nextDouble() < loggingFactor)
+                logger.warn(s"Merging partition1=${lstA.size} with partition2=${lstB.size} and taking the first n=$n, sample1='${lstA.take(5)}', sample2='${lstB.take(5)}'")
               lstA ++= lstB
               lstA.take(n)
             } else {
