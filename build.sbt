@@ -13,13 +13,13 @@ libraryDependencies += ("org.apache.spark" %% "spark-core" % "2.0.0" % "provided
   .exclude("org.apache.hadoop", "hadoop-client")
   .exclude("org.slf4j", "slf4j-log4j12")
 
-
 libraryDependencies += ("org.apache.hadoop" % "hadoop-client" % "2.7.2" % "provided")
 
-libraryDependencies += ("org.apache.hadoop" % "hadoop-aws" % "2.7.2")
-  .exclude("org.apache.htrace", "htrace-core")
-  .exclude("commons-beanutils", "commons-beanutils")
-  .exclude("org.slf4j", "slf4j-log4j12")
+libraryDependencies += ("org.apache.hadoop" % "hadoop-aws" % "2.7.2" % "provided")
+
+libraryDependencies += ("com.amazonaws" % "aws-java-sdk" % "1.7.4" % "provided")
+
+libraryDependencies += ("net.java.dev.jets3t" % "jets3t" % "0.9.0" % "provided")
 
 libraryDependencies += "org.scalatest" %% "scalatest" % "2.2.4"
 
