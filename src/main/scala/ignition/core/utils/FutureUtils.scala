@@ -1,5 +1,8 @@
 package ignition.core.utils
 
+import akka.actor.ActorSystem
+
+import scala.concurrent.duration.FiniteDuration
 import scala.concurrent.{ExecutionContext, Future, Promise, blocking, future}
 import scala.util.control.NonFatal
 import scala.util.{Failure, Success, Try}
@@ -27,6 +30,10 @@ object FutureUtils {
      */
     def asTry()(implicit ec: ExecutionContext) : Future[Try[V]] = {
       future.map(v => Success(v)).recover { case NonFatal(e) => Failure(e) }
+    }
+
+    def withTimeout(timeout: => Throwable)(implicit duration: FiniteDuration, system: ActorSystem): Future[V] = {
+      Future.firstCompletedOf(Seq(future, akka.pattern.after(duration, system.scheduler)(Future.failed(timeout))(system.dispatcher)))(system.dispatcher)
     }
   }
 

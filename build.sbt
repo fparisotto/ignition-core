@@ -35,6 +35,8 @@ libraryDependencies += "commons-lang" % "commons-lang" % "2.6"
 
 libraryDependencies += "org.slf4j" % "slf4j-api" % "1.7.5"
 
+libraryDependencies += "com.typesafe.akka" %% "akka-actor" % "2.3.4"
+
 resolvers += "Akka Repository" at "http://repo.akka.io/releases/"
 
 resolvers += "Sonatype OSS Releases" at "http://oss.sonatype.org/content/repositories/releases/"
