@@ -1,0 +1,302 @@
+package ignition.core.http
+
+import java.net.URL
+import java.util.concurrent.TimeoutException
+
+import akka.actor._
+import akka.io.IO
+import akka.pattern.ask
+import akka.util.Timeout
+
+import spray.can.Http
+import spray.can.Http.HostConnectorSetup
+import spray.can.client.{ClientConnectionSettings, HostConnectorSettings}
+import spray.http.HttpHeaders.Authorization
+import spray.http.StatusCodes.Redirection
+import spray.http._
+
+
+import scala.concurrent.duration._
+import scala.concurrent.{ExecutionContext, Future}
+import scala.language.postfixOps
+import scala.util.control.NonFatal
+
+import ignition.core.http.AsyncHttpClientStreamApi.{Request, RequestConfiguration}
+
+
+trait AsyncSprayHttpClient extends AsyncHttpClientStreamApi {
+
+  implicit def actorRefFactory: ActorRefFactory
+  def executionContext: ExecutionContext = actorRefFactory.dispatcher
+
+  override def makeRequest(request: AsyncHttpClientStreamApi.Request, backoff: FiniteDuration, retryOnHttpStatus: Seq[Int])
+                             (implicit timeout: Timeout, reporter: AsyncHttpClientStreamApi.ReporterCallback): Future[AsyncHttpClientStreamApi.StreamResponse] = {
+    val processor = actorRefFactory.actorOf(Props(new RequestProcessorActor(timeout, reporter, backoff, retryOnHttpStatus)))
+    (processor ? request).mapTo[AsyncHttpClientStreamApi.StreamResponse]
+  }
+
+  private class RequestProcessorActor(timeout: Timeout, reporter: AsyncHttpClientStreamApi.ReporterCallback, backoff: FiniteDuration, retryOnHttpStatus: Seq[Int])
+    extends Actor with ActorLogging {
+
+
+    import context.system
+
+    import scala.language.implicitConversions
+
+    def isRedirection(status: StatusCode): Boolean = status match {
+      case r: Redirection => true
+      case _ => false
+    }
+
+    private def toUriString(url: String, params: Map[String, String] = Map.empty) = {
+      def encode(content: String) = java.net.URLEncoder.encode(content, "UTF-8")
+      def encodeParams = params.map { case (k, v) => s"${encode(k)}=${encode(v)}" }.mkString("&")
+      if (params.isEmpty) url else s"$url?${encodeParams}"
+    }
+
+    private implicit def toAuthHeader(credentials: AsyncHttpClientStreamApi.Credentials): List[Authorization] =
+      List(Authorization(credentials = BasicHttpCredentials(username = credentials.user, password = credentials.password)))
+
+    private def toSprayRequest(request: Request): HttpRequest = request match {
+      case Request(uri, params, Some(credentials), method, body, _) if params.isEmpty =>
+          HttpRequest(method = method, uri = request.url, headers = credentials, entity = body)
+
+      case Request(uri, params, Some(credentials), method, body, _) =>
+        HttpRequest(method = method, uri = toUriString(request.url, params), headers = credentials, entity = body)
+
+      case Request(uri, params, None, method, body, _) if params.isEmpty =>
+        HttpRequest(method = method, uri = toUriString(request.url), entity = body)
+
+      case Request(uri, params, None, method, body, _) =>
+        HttpRequest(method = method, uri = toUriString(request.url, params), entity = body)
+    }
+
+    private def toSprayHostConnectorSetup(host: String, configuration: AsyncHttpClientStreamApi.RequestConfiguration): HostConnectorSetup = {
+      // Create based on defaults, change some of them
+      val ccs: ClientConnectionSettings = ClientConnectionSettings(system)
+      val hcs: HostConnectorSettings = HostConnectorSettings(system)
+
+      val updatedCcs = ccs.copy(
+        responseChunkAggregationLimit = 0, // makes our client ineffective if non zero
+        idleTimeout = configuration.idleTimeout,
+        connectingTimeout = configuration.connectingTimeout,
+        requestTimeout = configuration.requestTimeout
+      )
+
+      val updatedHcs = hcs.copy(
+        connectionSettings = updatedCcs,
+        maxRetries = 0, // We have our own retry mechanism
+        maxRedirects = 0, // We do our own redirect following
+        maxConnections = configuration.maxConnectionsPerHost,
+        pipelining = configuration.pipelining
+      )
+      HostConnectorSetup(host = host, settings = Option(updatedHcs))
+    }
+
+    private def executeSprayRequest(request: Request): Unit = request.requestConfiguration match {
+      case Some(configuration) =>
+        val url = new URL(request.url)
+        val message = (toSprayRequest(request), toSprayHostConnectorSetup(url.getHost, configuration))
+        IO(Http) ! message
+      case None =>
+        IO(Http) ! toSprayRequest(request)
+    }
+
+    def handleErrors(commander: ActorRef, request: Request, retry: Retry, storage: ByteStorage, remainingRedirects: Int): Receive = {
+      case ev @ Http.SendFailed(_) =>
+        log.debug("Communication error, cause: {}", ev)
+        reporter.onError(request, ev)
+        storage.close()
+        context.become(retrying(commander, request, remainingRedirects))
+        self ! retry.onError
+
+      case ev @ Timedout(_) =>
+        log.debug("Communication error, cause: {}", ev)
+        reporter.onError(request, ev)
+        storage.close()
+        context.become(retrying(commander, request, remainingRedirects))
+        self ! retry.onTimeout
+
+      case Status.Failure(NonFatal(exception)) =>
+        reporter.onError(request, exception)
+        storage.close()
+        exception match {
+          case ex: Http.RequestTimeoutException =>
+            log.warning("Request {} timeout, details: {}", request, ex.getMessage)
+            context.become(retrying(commander, request, remainingRedirects))
+            self ! retry.onTimeout
+
+          case ex: Http.ConnectionException =>
+            log.warning("Connection error on {}, details: {}", request, ex.getMessage)
+            context.become(retrying(commander, request, remainingRedirects))
+            self ! retry.onError
+
+          case unknownException =>
+            log.error(unknownException, "Unknown error on {}", request)
+            context.become(retrying(commander, request, remainingRedirects))
+            self ! retry.onError
+        }
+
+      case unknownMessage =>
+        log.debug("Unknown message: {}", unknownMessage)
+        reporter.onError(request, unknownMessage)
+        storage.close()
+        context.become(retrying(commander, request, remainingRedirects))
+        self ! retry.onError
+    }
+
+    def receive: Receive = {
+      case request: Request =>
+        log.debug("Starting request {}", request)
+        reporter.onRequest(request)
+        executeSprayRequest(request)
+        val retry = Retry(startTime = org.joda.time.DateTime.now, timeout = timeout.duration, timeoutBackoff = backoff)
+        val storage = new ByteStorage()
+        val maxRedirects = request.requestConfiguration.getOrElse(RequestConfiguration()).maxRedirects
+        context.become(waitingForResponse(sender, request, retry, storage, maxRedirects)
+          .orElse(handleErrors(sender, request, retry, storage, maxRedirects)))
+    }
+
+    def retrying(commander: ActorRef, request: Request, remainingRedirects: Int): Receive = {
+      case retry: Retry =>
+        if (retry.shouldGiveUp) {
+          reporter.onGiveUp(request)
+          log.warning("Error to get {}, no more retries {}, accepting failure", request, retry)
+          commander ! Status.Failure(new TimeoutException(s"Failed to get '${request.url}'"))
+          context.stop(self)
+        } else {
+          reporter.onRetry(request)
+          log.info("Retrying {}, retry status {}, backing off for {} millis", request, retry, retry.backoff.toMillis)
+          system.scheduler.scheduleOnce(retry.backoff) {
+            log.debug("Waking from backoff, retrying request {}", request)
+            executeSprayRequest(request)
+          }(executionContext)
+          val storage = new ByteStorage()
+          context.become(waitingForResponse(commander, request, retry, storage, remainingRedirects)
+            .orElse(handleErrors(commander, request, retry, storage, remainingRedirects)))
+        }
+    }
+
+    def waitingForResponse(commander: ActorRef, request: Request, retry: Retry, storage: ByteStorage, remainingRedirects: Int): Receive = {
+      case response@HttpResponse(status, entity, headers, _) => try {
+        storage.write(response.entity.data.toByteArray)
+        if (isRedirection(status))
+          handleRedirect(commander, storage, retry, request, status, response, remainingRedirects)
+        else if (status.isSuccess) {
+          reporter.onResponse(request, status.intValue)
+          commander ! Status.Success(AsyncHttpClientStreamApi.StreamResponse(status.intValue, storage.getInputStream()))
+          context.stop(self)
+        } else if (retryOnHttpStatus.contains(status.intValue)) {
+          storage.close()
+          log.debug("HttpResponse: Status {}, retrying...", status)
+          context.become(retrying(commander, request, remainingRedirects))
+          self ! retry.onError
+        } else {
+          val message = s"HTTP response status ${status.intValue}, on request ${request}, ${status.defaultMessage}"
+          log.debug("HttpResponse: {}", message)
+          reporter.onFailure(request, status.intValue)
+          reporter.onGiveUp(request)
+          commander ! Status.Failure(new AsyncHttpClientStreamApi.RequestException(message = message,
+            response = AsyncHttpClientStreamApi.StreamResponse(status.intValue, storage.getInputStream())))
+          context.stop(self)
+        }
+      } catch {
+        case NonFatal(ex) =>
+          storage.close()
+          log.error(ex, "HttpResponse: Failure on creating HttpResponse")
+          reporter.onError(request, ex)
+          context.become(retrying(commander, request, remainingRedirects))
+          self ! retry.onError
+      }
+
+      case chunkStart@ChunkedResponseStart(HttpResponse(status, entity, headers, _)) => try {
+        storage.write(entity.data.toByteArray)
+        if (isRedirection(status))
+          handleRedirect(commander, storage, retry, request, status, chunkStart, remainingRedirects)
+        else if (status.isSuccess) {
+          context.become(accumulateChunks(commander, request, retry, storage, status, remainingRedirects)
+            .orElse(handleErrors(commander, request, retry, storage, remainingRedirects)))
+        } else if (retryOnHttpStatus.contains(status.intValue)) {
+          storage.close()
+          log.debug("ChunkedResponseStart: Status {}, retrying...", status)
+          context.become(retrying(commander, request, remainingRedirects))
+          self ! retry.onError
+        } else {
+          val message = s"HTTP response status ${status.intValue}, on request ${request}, ${status.defaultMessage}"
+          log.debug("ChunkedResponseStart: {}", message)
+          reporter.onFailure(request, status.intValue)
+          reporter.onGiveUp(request)
+          commander ! Status.Failure(new AsyncHttpClientStreamApi.RequestException(message = message,
+            response = AsyncHttpClientStreamApi.StreamResponse(status.intValue, storage.getInputStream())))
+          context.stop(self)
+        }
+      } catch {
+        case NonFatal(ex) =>
+          log.error(ex, "ChunkedResponseStart: Failure on creating ChunkedHttpResponse")
+          reporter.onError(request, ex)
+          context.become(retrying(commander, request, remainingRedirects))
+          self ! retry.onError
+      }
+    }
+
+    def accumulateChunks(commander: ActorRef, request: Request, retry: Retry, storage: ByteStorage, status: StatusCode, remainingRedirects: Int): Receive = {
+      case message@MessageChunk(data, _) => try {
+        storage.write(data.toByteArray)
+      } catch {
+        case NonFatal(ex) =>
+          storage.close()
+          log.error(ex, "MessageChunk: Failure on accumulate chunk data")
+          reporter.onError(request, ex)
+          context.become(retrying(commander, request, remainingRedirects))
+          self ! retry.onError
+      }
+
+      case chunkEnd: ChunkedMessageEnd =>
+        log.debug("ChunkedMessageEnd: all data was received for request {}, status {}", request, status)
+        reporter.onResponse(request, status.intValue)
+        commander ! Status.Success(AsyncHttpClientStreamApi.StreamResponse(status.intValue, storage.getInputStream()))
+        context.stop(self)
+    }
+
+    def handleRedirect(commander: ActorRef, oldStorage: ByteStorage, oldRetry: Retry, oldRequest: Request, status: StatusCode, rawResponse: HttpResponsePart, remainingRedirects: Int): Unit = {
+      if (remainingRedirects <= 0) {
+        val message = s"HandleRedirect: exceeded redirection limit on $oldRequest with status $status"
+        log.warning(message)
+        reporter.onGiveUp(oldRequest)
+        commander ! Status.Failure(new Exception(message))
+        context.stop(self)
+      } else {
+        def makeRequest(headers: List[HttpHeader]): Receive = {
+          oldStorage.close()
+          val newRemainingRedirects = remainingRedirects - 1
+          headers.find(_.is("location")).map(_.value).map { newLocation =>
+            log.debug("Making redirect to {}", newLocation)
+            val newRequest = oldRequest.copy(url = newLocation)
+            executeSprayRequest(newRequest)
+            val newRetry = Retry(startTime = org.joda.time.DateTime.now, timeout = timeout.duration, timeoutBackoff = backoff)
+            val newStorage = new ByteStorage()
+            waitingForResponse(commander, newRequest, newRetry, newStorage, newRemainingRedirects)
+              .orElse(handleErrors(commander, newRequest, newRetry, newStorage, newRemainingRedirects))
+          }.getOrElse {
+            log.warning("Received redirect for request {} with headers {} without location, retrying...", oldRequest, headers)
+            retrying(commander, oldRequest, newRemainingRedirects)
+          }
+        }
+        context.become(rawResponse match {
+          case response@HttpResponse(status, entity, headers, _) =>
+            makeRequest(headers)
+          case chunkStart@ChunkedResponseStart(HttpResponse(status, entity, headers, _)) => {
+            case message@MessageChunk(data, _) =>
+              // do nothing
+            case chunkEnd: ChunkedMessageEnd =>
+              context.become(makeRequest(headers))
+          }
+          case other =>
+            throw new Exception(s"Bug, called on $other")
+        })
+      }
+    }
+
+  }
+
+}

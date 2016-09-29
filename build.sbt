@@ -37,6 +37,14 @@ libraryDependencies += "org.slf4j" % "slf4j-api" % "1.7.5"
 
 libraryDependencies += "com.typesafe.akka" %% "akka-actor" % "2.3.4"
 
+libraryDependencies += "io.spray" %% "spray-json" % "1.3.2"
+
+libraryDependencies += "io.spray" %% "spray-client" % "1.3.2"
+
+libraryDependencies += "io.spray" %% "spray-http" % "1.3.2"
+
+libraryDependencies += "io.spray" %% "spray-caching" % "1.3.2"
+
 resolvers += "Akka Repository" at "http://repo.akka.io/releases/"
 
 resolvers += "Sonatype OSS Releases" at "http://oss.sonatype.org/content/repositories/releases/"
