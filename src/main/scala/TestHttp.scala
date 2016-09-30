@@ -21,7 +21,7 @@ object TestHttp extends App{
     val client = new AsyncSprayHttpClient {
       override implicit def actorRefFactory: ActorRefFactory = system
     }
-    val url = "http://httpbin.org/delay/10" // "http://127.0.0.1:8081/"
+    val url = "https://httpbin.org/delay/10" // "http://127.0.0.1:8081/"
     val conf = RequestConfiguration(requestTimeout = Duration(12, TimeUnit.SECONDS), idleTimeout = Duration(5, TimeUnit.SECONDS))
     implicit val reporter = NoOpReporter
     implicit val timeout = Timeout(30, TimeUnit.SECONDS)

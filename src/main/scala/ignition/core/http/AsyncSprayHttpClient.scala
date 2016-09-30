@@ -71,7 +71,7 @@ trait AsyncSprayHttpClient extends AsyncHttpClientStreamApi {
         HttpRequest(method = method, uri = toUriString(request.url, params), entity = body)
     }
 
-    private def toSprayHostConnectorSetup(host: String, configuration: AsyncHttpClientStreamApi.RequestConfiguration): HostConnectorSetup = {
+    private def toSprayHostConnectorSetup(uri: Uri, configuration: AsyncHttpClientStreamApi.RequestConfiguration): HostConnectorSetup = {
       // Create based on defaults, change some of them
       val ccs: ClientConnectionSettings = ClientConnectionSettings(system)
       val hcs: HostConnectorSettings = HostConnectorSettings(system)
@@ -90,13 +90,15 @@ trait AsyncSprayHttpClient extends AsyncHttpClientStreamApi {
         maxConnections = configuration.maxConnectionsPerHost,
         pipelining = configuration.pipelining
       )
-      HostConnectorSetup(host = host, settings = Option(updatedHcs))
+
+      val host = uri.authority.host
+      HostConnectorSetup(host.toString, uri.effectivePort, sslEncryption = uri.scheme == "https", settings = Option(updatedHcs))
     }
 
     private def executeSprayRequest(request: Request): Unit = request.requestConfiguration match {
       case Some(configuration) =>
-        val url = new URL(request.url)
-        val message = (toSprayRequest(request), toSprayHostConnectorSetup(url.getHost, configuration))
+        val url = Uri(request.url)
+        val message = (toSprayRequest(request), toSprayHostConnectorSetup(url, configuration))
         IO(Http) ! message
       case None =>
         IO(Http) ! toSprayRequest(request)
