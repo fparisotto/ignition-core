@@ -24,7 +24,7 @@ import getpass
 import json
 import glob
 import webbrowser
-
+import ssl
 
 log = logging.getLogger()
 log.setLevel(logging.INFO)
@@ -506,15 +506,23 @@ def job_attach(cluster_name, key_file=default_key_file, job_name=None, job_tag=N
 class NotHealthyCluster(Exception): pass
 
 @named('health-check')
-def health_check(cluster_name, key_file=default_key_file, master=None, remote_user=default_remote_user, region=default_region):
-    master = master or get_master(cluster_name, region=region)
-    all_args = load_cluster_args(master, key_file, remote_user)
-    nslaves = int(all_args['slaves'])
-    minimum_percentage_healthy_slaves = all_args['minimum_percentage_healthy_slaves']
-    masters, slaves = get_active_nodes(cluster_name, region=region)
-    if nslaves == 0 or float(len(slaves)) / nslaves < minimum_percentage_healthy_slaves:
-        raise NotHealthyCluster('Not enough healthy slaves: {0}/{1}'.format(len(slaves), nslaves))
-
+def health_check(cluster_name, key_file=default_key_file, master=None, remote_user=default_remote_user, region=default_region, retries=3):
+    for i in range(retries):
+        try:
+            master = master or get_master(cluster_name, region=region)
+            all_args = load_cluster_args(master, key_file, remote_user)
+            nslaves = int(all_args['slaves'])
+            minimum_percentage_healthy_slaves = all_args['minimum_percentage_healthy_slaves']
+            masters, slaves = get_active_nodes(cluster_name, region=region)
+            if nslaves == 0 or float(len(slaves)) / nslaves < minimum_percentage_healthy_slaves:
+                raise NotHealthyCluster('Not enough healthy slaves: {0}/{1}'.format(len(slaves), nslaves))
+        except NotHealthyCluster, e:
+            raise e
+        except Exception, e:
+            log.warning("Failed to check cluster health, cluster: %s, retries %s" % (cluster_name, i), exc_info=True)
+            if i >= retries - 1:
+                log.critical("Failed to check cluster health, cluster: %s, giveup!" % (cluster_name))
+                raise e
 
 class JobFailure(Exception): pass
 
@@ -645,7 +653,7 @@ def wait_for_job(cluster_name, job_name, job_tag, key_file=default_key_file,
                 failures += 1
                 last_failure = 'Unexpected response: {}'.format(output)
             health_check(cluster_name=cluster_name, key_file=key_file, master=master, remote_user=remote_user, region=region)
-        except subprocess.CalledProcessError as e:
+        except (subprocess.CalledProcessError, ssl.SSLError) as e:
             failures += 1
             log.exception('Got exception')
             last_failure = 'Exception: {}'.format(e)
