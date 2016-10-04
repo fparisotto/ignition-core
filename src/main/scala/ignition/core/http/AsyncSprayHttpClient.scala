@@ -71,37 +71,44 @@ trait AsyncSprayHttpClient extends AsyncHttpClientStreamApi {
         HttpRequest(method = method, uri = toUriString(request.url, params), entity = body)
     }
 
-    private def toSprayHostConnectorSetup(uri: Uri, configuration: AsyncHttpClientStreamApi.RequestConfiguration): HostConnectorSetup = {
+    private def toSprayHostConnectorSetup(uri: Uri, conf: Option[AsyncHttpClientStreamApi.RequestConfiguration]): HostConnectorSetup = {
       // Create based on defaults, change some of them
       val ccs: ClientConnectionSettings = ClientConnectionSettings(system)
       val hcs: HostConnectorSettings = HostConnectorSettings(system)
 
       val updatedCcs = ccs.copy(
         responseChunkAggregationLimit = 0, // makes our client ineffective if non zero
-        idleTimeout = configuration.idleTimeout,
-        connectingTimeout = configuration.connectingTimeout,
-        requestTimeout = configuration.requestTimeout
+        idleTimeout = conf.flatMap(_.idleTimeout).getOrElse(ccs.idleTimeout),
+        connectingTimeout = conf.flatMap(_.connectingTimeout).getOrElse(ccs.connectingTimeout),
+        requestTimeout = conf.flatMap(_.requestTimeout).getOrElse(ccs.requestTimeout)
       )
+
+      val maxConnections = conf.flatMap(_.maxConnectionsPerHost).getOrElse {
+        // Let's avoid someone shoot his own foot
+        if (hcs.maxConnections == 4) // Spray's default is stupidly low
+          // Use the API's default, which is more reasonable
+          RequestConfiguration.defaultMaxConnectionsPerHost
+        else
+          // If the conf is the non-default value, then someone know what he's doing. use that configured value
+          hcs.maxConnections
+      }
 
       val updatedHcs = hcs.copy(
         connectionSettings = updatedCcs,
         maxRetries = 0, // We have our own retry mechanism
         maxRedirects = 0, // We do our own redirect following
-        maxConnections = configuration.maxConnectionsPerHost,
-        pipelining = configuration.pipelining
+        maxConnections = maxConnections,
+        pipelining = conf.flatMap(_.pipelining).getOrElse(hcs.pipelining)
       )
 
       val host = uri.authority.host
       HostConnectorSetup(host.toString, uri.effectivePort, sslEncryption = uri.scheme == "https", settings = Option(updatedHcs))
     }
 
-    private def executeSprayRequest(request: Request): Unit = request.requestConfiguration match {
-      case Some(configuration) =>
-        val url = Uri(request.url)
-        val message = (toSprayRequest(request), toSprayHostConnectorSetup(url, configuration))
-        IO(Http) ! message
-      case None =>
-        IO(Http) ! toSprayRequest(request)
+    private def executeSprayRequest(request: Request): Unit = {
+      val url = Uri(request.url)
+      val message = (toSprayRequest(request), toSprayHostConnectorSetup(url, request.requestConfiguration))
+      IO(Http) ! message
     }
 
     def handleErrors(commander: ActorRef, request: Request, retry: Retry, storage: ByteStorage, remainingRedirects: Int): Receive = {
@@ -154,7 +161,8 @@ trait AsyncSprayHttpClient extends AsyncHttpClientStreamApi {
         executeSprayRequest(request)
         val retry = Retry(startTime = org.joda.time.DateTime.now, timeout = timeout.duration, timeoutBackoff = backoff)
         val storage = new ByteStorage()
-        val maxRedirects = request.requestConfiguration.getOrElse(RequestConfiguration()).maxRedirects
+        val maxRedirects =
+          request.requestConfiguration.flatMap(_.maxRedirects).getOrElse(RequestConfiguration.defaultMaxRedirects)
         context.become(waitingForResponse(sender, request, retry, storage, maxRedirects)
           .orElse(handleErrors(sender, request, retry, storage, maxRedirects)))
     }

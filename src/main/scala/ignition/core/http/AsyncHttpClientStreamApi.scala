@@ -26,19 +26,29 @@ object AsyncHttpClientStreamApi {
   // TODO: return a stream is dangerous because implies into a lock
   case class StreamResponse(status: Int, content: InputStream)
 
-  case class RequestConfiguration(maxRedirects: Int = 15,
-                                  maxConnectionsPerHost: Int = 500,
-                                  pipelining: Boolean = false,
-                                  idleTimeout: Duration = Duration(30, TimeUnit.SECONDS),
-                                  requestTimeout: Duration = Duration(20, TimeUnit.SECONDS),
-                                  connectingTimeout: Duration = Duration(10, TimeUnit.SECONDS))
+  // If any value is None, it will fallback to the implementation's default
+  object RequestConfiguration {
+    val defaultMaxRedirects: Int = 15
+    val defaultMaxConnectionsPerHost: Int = 500
+    val defaultPipelining: Boolean = false
+    val defaultIdleTimeout: FiniteDuration = Duration(30, TimeUnit.SECONDS)
+    val defaultRequestTimeout: FiniteDuration = Duration(20, TimeUnit.SECONDS)
+    val defaultConnectingTimeout: FiniteDuration = Duration(10, TimeUnit.SECONDS)
+  }
+
+  case class RequestConfiguration(maxRedirects: Option[Int] = Option(RequestConfiguration.defaultMaxRedirects),
+                                  maxConnectionsPerHost: Option[Int] = Option(RequestConfiguration.defaultMaxConnectionsPerHost),
+                                  pipelining: Option[Boolean] = Option(RequestConfiguration.defaultPipelining),
+                                  idleTimeout: Option[Duration] = Option(RequestConfiguration.defaultIdleTimeout),
+                                  requestTimeout: Option[Duration] = Option(RequestConfiguration.defaultRequestTimeout),
+                                  connectingTimeout: Option[Duration] = Option(RequestConfiguration.defaultConnectingTimeout))
 
   case class Request(url: String,
                      params: Map[String, String] = Map.empty,
                      credentials: Option[Credentials] = None,
                      method: HttpMethod = HttpMethods.GET,
                      body: HttpEntity = HttpEntity.Empty,
-                     requestConfiguration: Option[RequestConfiguration] = Option(RequestConfiguration()))
+                     requestConfiguration: Option[RequestConfiguration] = None)
 
   case class RequestException(message: String, response: StreamResponse) extends RuntimeException(message)
 

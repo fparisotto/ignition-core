@@ -22,7 +22,7 @@ object TestHttp extends App{
       override implicit def actorRefFactory: ActorRefFactory = system
     }
     val url = "https://httpbin.org/delay/10" // "http://127.0.0.1:8081/"
-    val conf = RequestConfiguration(requestTimeout = Duration(12, TimeUnit.SECONDS), idleTimeout = Duration(5, TimeUnit.SECONDS))
+    val conf = RequestConfiguration(requestTimeout = Option(Duration(12, TimeUnit.SECONDS)), idleTimeout = Option(Duration(5, TimeUnit.SECONDS)))
     implicit val reporter = NoOpReporter
     implicit val timeout = Timeout(30, TimeUnit.SECONDS)
 
@@ -36,7 +36,7 @@ object TestHttp extends App{
     }
 
     //Should time out and keep retrying
-    val tightConf = conf.copy(requestTimeout = Duration(3, TimeUnit.SECONDS))
+    val tightConf = conf.copy(requestTimeout = Option(Duration(3, TimeUnit.SECONDS)))
     val request2 = client.makeRequest(Request(url, requestConfiguration = Option(tightConf)))
 
     request2.onComplete {
