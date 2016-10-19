@@ -73,7 +73,7 @@ object AsyncHttpClientStreamApi {
 
 trait AsyncHttpClientStreamApi {
 
-  def makeRequest(request: AsyncHttpClientStreamApi.Request, initialBackoff: FiniteDuration = 100 milliseconds, retryOnHttpStatus: Seq[Int] = List.empty)
-                             (implicit timeout: Timeout, reporter: AsyncHttpClientStreamApi.ReporterCallback = AsyncHttpClientStreamApi.NoOpReporter): Future[AsyncHttpClientStreamApi.StreamResponse]
+  def makeRequest(request: AsyncHttpClientStreamApi.Request, retryConf: RetryConf = RetryConf(), retryOnHttpStatus: Seq[Int] = List.empty)
+                   (implicit timeout: Timeout, reporter: AsyncHttpClientStreamApi.ReporterCallback = AsyncHttpClientStreamApi.NoOpReporter): Future[AsyncHttpClientStreamApi.StreamResponse]
 
 }

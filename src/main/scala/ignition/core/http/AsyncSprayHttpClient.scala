@@ -29,13 +29,16 @@ trait AsyncSprayHttpClient extends AsyncHttpClientStreamApi {
   implicit def actorRefFactory: ActorRefFactory
   def executionContext: ExecutionContext = actorRefFactory.dispatcher
 
-  override def makeRequest(request: AsyncHttpClientStreamApi.Request, backoff: FiniteDuration, retryOnHttpStatus: Seq[Int])
+  override def makeRequest(request: AsyncHttpClientStreamApi.Request, retryConf: RetryConf, retryOnHttpStatus: Seq[Int])
                              (implicit timeout: Timeout, reporter: AsyncHttpClientStreamApi.ReporterCallback): Future[AsyncHttpClientStreamApi.StreamResponse] = {
-    val processor = actorRefFactory.actorOf(Props(new RequestProcessorActor(timeout, reporter, backoff, retryOnHttpStatus)))
+    val processor = actorRefFactory.actorOf(Props(new RequestProcessorActor(timeout, reporter, retryConf, retryOnHttpStatus)))
     (processor ? request).mapTo[AsyncHttpClientStreamApi.StreamResponse]
   }
 
-  private class RequestProcessorActor(timeout: Timeout, reporter: AsyncHttpClientStreamApi.ReporterCallback, backoff: FiniteDuration, retryOnHttpStatus: Seq[Int])
+  private class RequestProcessorActor(timeout: Timeout,
+                                      reporter: AsyncHttpClientStreamApi.ReporterCallback,
+                                      retryConf: RetryConf,
+                                      retryOnHttpStatus: Seq[Int])
     extends Actor with ActorLogging {
 
 
@@ -159,7 +162,7 @@ trait AsyncSprayHttpClient extends AsyncHttpClientStreamApi {
         log.debug("Starting request {}", request)
         reporter.onRequest(request)
         executeSprayRequest(request)
-        val retry = Retry(startTime = org.joda.time.DateTime.now, timeout = timeout.duration, timeoutBackoff = backoff)
+        val retry = Retry(startTime = org.joda.time.DateTime.now, timeout = timeout.duration, conf = retryConf)
         val storage = new ByteStorage()
         val maxRedirects =
           request.requestConfiguration.flatMap(_.maxRedirects).getOrElse(RequestConfiguration.defaultMaxRedirects)
@@ -283,7 +286,7 @@ trait AsyncSprayHttpClient extends AsyncHttpClientStreamApi {
             log.debug("Making redirect to {}", newLocation)
             val newRequest = oldRequest.copy(url = newLocation)
             executeSprayRequest(newRequest)
-            val newRetry = Retry(startTime = org.joda.time.DateTime.now, timeout = timeout.duration, timeoutBackoff = backoff)
+            val newRetry = Retry(startTime = org.joda.time.DateTime.now, timeout = timeout.duration, conf = retryConf)
             val newStorage = new ByteStorage()
             waitingForResponse(commander, newRequest, newRetry, newStorage, newRemainingRedirects)
               .orElse(handleErrors(commander, newRequest, newRetry, newStorage, newRemainingRedirects))
