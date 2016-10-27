@@ -105,7 +105,9 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
 
   private val logger = LoggerFactory.getLogger(getClass)
 
-  private val tempUpdate = new ConcurrentLinkedHashMap.Builder[Any, Future[TimestampedValue[V]]].build()
+  private val tempUpdate = new ConcurrentLinkedHashMap.Builder[Any, Future[TimestampedValue[V]]]
+    .maximumWeightedCapacity(Long.MaxValue)
+    .build()
 
   protected def now = DateTime.now
 
