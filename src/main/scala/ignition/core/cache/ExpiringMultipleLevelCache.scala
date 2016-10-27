@@ -29,7 +29,7 @@ object ExpiringMultipleLevelCache {
 
   trait RemoteWritableCache[V] {
     def set(key: String, value: V)(implicit ec: ExecutionContext): Future[Unit]
-    def setLock(key: String, ttl: FiniteDuration): Future[Boolean]
+    def setLock(key: String, ttl: FiniteDuration)(implicit ec: ExecutionContext): Future[Boolean]
   }
 
   trait RemoteReadableCache[V] {
