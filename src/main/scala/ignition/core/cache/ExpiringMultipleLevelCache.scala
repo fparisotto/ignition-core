@@ -1,11 +1,10 @@
 package ignition.core.cache
 
 import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap
-import ignition.core.utils.FutureUtils._
 import ignition.core.utils.DateUtils._
-import org.joda.time.{DateTime, Period}
+import ignition.core.utils.FutureUtils._
+import org.joda.time.DateTime
 import org.slf4j.LoggerFactory
-
 
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future, Promise}
@@ -14,8 +13,8 @@ import scala.util.{Failure, Success, Try}
 
 object ExpiringMultipleLevelCache {
   case class TimestampedValue[V](date: DateTime, value: V) {
-    def hasExpired(ttl: Period, now: DateTime): Boolean = {
-      date.plus(ttl).isBefore(now)
+    def hasExpired(ttl: FiniteDuration, now: DateTime): Boolean = {
+      date.plus(ttl.toMillis).isBefore(now)
     }
   }
 
@@ -40,17 +39,17 @@ object ExpiringMultipleLevelCache {
   trait RemoteCacheRW[V] extends RemoteReadableCache[V] with RemoteWritableCache[V]
 
   trait ReporterCallback {
-    def onCacheMissNothingFound()
-    def onCacheMissButFoundExpiredLocal()
-    def onCacheMissButFoundExpiredRemote()
-    def onRemoteCacheHit()
-    def onLocalCacheHit()
-    def onUnexpectedBehaviour()
-    def onStillTryingToLockOrGet()
-    def onSuccessfullyRemoteSetValue()
-    def onRemoteCacheHitAfterGenerating()
-    def onErrorGeneratingValue(key: String, eLocal: Throwable)
-    def onLocalError(key: String, e: Throwable)
+    def onCacheMissNothingFound(): Unit
+    def onCacheMissButFoundExpiredLocal(): Unit
+    def onCacheMissButFoundExpiredRemote(): Unit
+    def onRemoteCacheHit(): Unit
+    def onLocalCacheHit(): Unit
+    def onUnexpectedBehaviour(): Unit
+    def onStillTryingToLockOrGet(): Unit
+    def onSuccessfullyRemoteSetValue(): Unit
+    def onRemoteCacheHitAfterGenerating(): Unit
+    def onErrorGeneratingValue(key: String, eLocal: Throwable): Unit
+    def onLocalError(key: String, e: Throwable): Unit
     def onRemoteError(key: String, t: Throwable): Unit
     def onRemoteGiveUp(key: String): Unit
   }
@@ -73,12 +72,13 @@ object ExpiringMultipleLevelCache {
 }
 
 
-import ExpiringMultipleLevelCache._
+import ignition.core.cache.ExpiringMultipleLevelCache._
 
 
-case class ExpiringMultipleLevelCache[V](ttl: Period,
+case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
                                          localCache: LocalCache[TimestampedValue[V]],
                                          remoteRW: Option[RemoteCacheRW[TimestampedValue[V]]] = None,
+                                         remoteLockTTL: FiniteDuration = 5.seconds,
                                          reporter: ExpiringMultipleLevelCache.ReporterCallback = ExpiringMultipleLevelCache.NoOpReporter,
                                          maxErrorsToRetryOnRemote: Int = 5) extends GenericCache[V] {
 
@@ -91,8 +91,6 @@ case class ExpiringMultipleLevelCache[V](ttl: Period,
   private def timestamp(v: V) = TimestampedValue(now, v)
 
   private def remoteLockKey(key: Any) = s"$key-emlc-lock"
-
-  private val remoteLockTTL = 5.seconds
 
 
   // The idea is simple, have two caches: remote and local
