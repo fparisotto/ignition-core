@@ -5,9 +5,11 @@ import ignition.core.utils.DateUtils._
 import ignition.core.utils.FutureUtils._
 import org.joda.time.DateTime
 import org.slf4j.LoggerFactory
+import spray.caching.ValueMagnet
 
 import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future, Promise}
+import scala.util.control.NonFatal
 import scala.util.{Failure, Success, Try}
 
 
@@ -18,7 +20,26 @@ object ExpiringMultipleLevelCache {
     }
   }
 
-  trait GenericCache[V] {
+  trait GenericCache[V] { cache =>
+    // Keep compatible with Spray Cache
+    def apply(key: String) = new Keyed(key)
+
+    class Keyed(key: String) {
+      /**
+        * Returns either the cached Future for the key or evaluates the given call-by-name argument
+        * which produces either a value instance of type `V` or a `Future[V]`.
+        */
+      def apply(magnet: ⇒ ValueMagnet[V])(implicit ec: ExecutionContext): Future[V] =
+        cache.apply(key, () ⇒ try magnet.future catch { case NonFatal(e) ⇒ Future.failed(e) })
+
+      /**
+        * Returns either the cached Future for the key or evaluates the given function which
+        * should lead to eventual completion of the promise.
+        */
+      def apply[U](f: Promise[V] ⇒ U)(implicit ec: ExecutionContext): Future[V] =
+        cache.apply(key, () ⇒ { val p = Promise[V](); f(p); p.future })
+    }
+
     def apply(key: String, genValue: () ⇒ Future[V])(implicit ec: ExecutionContext): Future[V]
   }
 
@@ -39,15 +60,15 @@ object ExpiringMultipleLevelCache {
   trait RemoteCacheRW[V] extends RemoteReadableCache[V] with RemoteWritableCache[V]
 
   trait ReporterCallback {
-    def onCacheMissNothingFound(): Unit
-    def onCacheMissButFoundExpiredLocal(): Unit
-    def onCacheMissButFoundExpiredRemote(): Unit
-    def onRemoteCacheHit(): Unit
-    def onLocalCacheHit(): Unit
-    def onUnexpectedBehaviour(): Unit
-    def onStillTryingToLockOrGet(): Unit
-    def onSuccessfullyRemoteSetValue(): Unit
-    def onRemoteCacheHitAfterGenerating(): Unit
+    def onCacheMissNothingFound(key: String): Unit
+    def onCacheMissButFoundExpiredLocal(key: String): Unit
+    def onCacheMissButFoundExpiredRemote(key: String): Unit
+    def onRemoteCacheHit(key: String): Unit
+    def onLocalCacheHit(key: String): Unit
+    def onUnexpectedBehaviour(key: String): Unit
+    def onStillTryingToLockOrGet(key: String): Unit
+    def onSuccessfullyRemoteSetValue(key: String): Unit
+    def onRemoteCacheHitAfterGenerating(key: String): Unit
     def onErrorGeneratingValue(key: String, eLocal: Throwable): Unit
     def onLocalError(key: String, e: Throwable): Unit
     def onRemoteError(key: String, t: Throwable): Unit
@@ -55,19 +76,19 @@ object ExpiringMultipleLevelCache {
   }
 
   object NoOpReporter extends ReporterCallback {
-    override def onCacheMissNothingFound(): Unit = {}
-    override def onUnexpectedBehaviour(): Unit = {}
-    override def onSuccessfullyRemoteSetValue(): Unit = {}
+    override def onCacheMissNothingFound(key: String): Unit = {}
+    override def onUnexpectedBehaviour(key: String): Unit = {}
+    override def onSuccessfullyRemoteSetValue(key: String): Unit = {}
     override def onRemoteError(key: String, t: Throwable): Unit = {}
     override def onRemoteGiveUp(key: String): Unit = {}
     override def onLocalError(key: String, e: Throwable): Unit = {}
     override def onErrorGeneratingValue(key: String, eLocal: Throwable): Unit = {}
-    override def onRemoteCacheHitAfterGenerating(): Unit = {}
-    override def onCacheMissButFoundExpiredRemote(): Unit = {}
-    override def onStillTryingToLockOrGet(): Unit = {}
-    override def onLocalCacheHit(): Unit = {}
-    override def onRemoteCacheHit(): Unit = {}
-    override def onCacheMissButFoundExpiredLocal(): Unit = {}
+    override def onRemoteCacheHitAfterGenerating(key: String): Unit = {}
+    override def onCacheMissButFoundExpiredRemote(key: String): Unit = {}
+    override def onStillTryingToLockOrGet(key: String): Unit = {}
+    override def onLocalCacheHit(key: String): Unit = {}
+    override def onRemoteCacheHit(key: String): Unit = {}
+    override def onCacheMissButFoundExpiredLocal(key: String): Unit = {}
   }
 }
 
@@ -103,25 +124,25 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
         future.flatMap {
           case Success(localValue) if !localValue.hasExpired(ttl, now) =>
             // We have locally a good value, just return it
-            reporter.onLocalCacheHit()
+            reporter.onLocalCacheHit(key)
             Future.successful(localValue.value)
           case Success(expiredLocalValue) if remoteRW.nonEmpty =>
             // We have locally an expired value, but we can check a remote cache for better value
             remoteRW.get.get(key).asTry().flatMap {
               case Success(Some(remoteValue)) if !remoteValue.hasExpired(ttl, now) =>
                 // Remote is good, set locally and return it
-                reporter.onRemoteCacheHit()
+                reporter.onRemoteCacheHit(key)
                 localCache.set(key, remoteValue)
                 Future.successful(remoteValue.value)
               case Success(Some(expiredRemote)) =>
                 // Expired local and expired remote, return the most recent of them, async update both
-                reporter.onCacheMissButFoundExpiredRemote()
+                reporter.onCacheMissButFoundExpiredRemote(key)
                 tryGenerateAndSet(key, genValue)
                 val mostRecent = Set(expiredLocalValue, expiredRemote).maxBy(_.date)
                 Future.successful(mostRecent.value)
               case Success(None) =>
                 // No remote found, return local, async update both
-                reporter.onCacheMissButFoundExpiredLocal()
+                reporter.onCacheMissButFoundExpiredLocal(key)
                 tryGenerateAndSet(key, genValue)
                 Future.successful(expiredLocalValue.value)
               case Failure(e) =>
@@ -133,7 +154,7 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
           case Success(expiredLocalValue) if remoteRW.isEmpty =>
             // There is no remote cache configured, we'are on our own
             // Return expired value and try to generate a new one for the future
-            reporter.onCacheMissButFoundExpiredLocal()
+            reporter.onCacheMissButFoundExpiredLocal(key)
             tryGenerateAndSet(key, genValue)
             Future.successful(expiredLocalValue.value)
           case Failure(e) =>
@@ -147,17 +168,17 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
         remoteRW.get.get(key).asTry().flatMap {
           case Success(Some(remoteValue)) if !remoteValue.hasExpired(ttl, now) =>
             // Remote is good, set locally and return it
-            reporter.onRemoteCacheHit()
+            reporter.onRemoteCacheHit(key)
             localCache.set(key, remoteValue)
             Future.successful(remoteValue.value)
           case Success(Some(expiredRemote)) =>
             // Expired remote, return the it, async update
-            reporter.onCacheMissButFoundExpiredRemote()
+            reporter.onCacheMissButFoundExpiredRemote(key)
             tryGenerateAndSet(key, genValue).map(_.value)
             Future.successful(expiredRemote.value)
           case Success(None) =>
             // No good remote, sync generate
-            reporter.onCacheMissNothingFound()
+            reporter.onCacheMissNothingFound(key)
             tryGenerateAndSet(key, genValue).map(_.value)
           case Failure(e) =>
             reporter.onRemoteError(key, e)
@@ -167,7 +188,7 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
       case None if remoteRW.isEmpty =>
         // No local and no remote to look, just generate it
         // The caller will need to wait for the value generation
-        reporter.onCacheMissNothingFound()
+        reporter.onCacheMissNothingFound(key)
         tryGenerateAndSet(key, genValue).map(_.value)
     }
 
@@ -186,7 +207,7 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
             tempUpdate.remove(key)
           case Success(v) =>
             // Have we generated/got an expired value!?
-            reporter.onUnexpectedBehaviour()
+            reporter.onUnexpectedBehaviour(key)
             logger.warn(s"tryGenerateAndSet, key $key: unexpectedly generated/got an expired value: $v")
             localCache.set(key, v)
             promise.trySuccess(v)
@@ -286,7 +307,7 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
           remote.get(key).asTry().flatMap {
             case Success(Some(remoteValue)) if !remoteValue.hasExpired(ttl, now) =>
               // Current value is good, just return it
-              reporter.onRemoteCacheHitAfterGenerating()
+              reporter.onRemoteCacheHitAfterGenerating(key)
               logger.info(s"remoteSetOrGet got lock for $key but found already a good value on remote")
               Future.successful(remoteValue)
             case Success(_) =>
@@ -295,7 +316,7 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
               remote.set(key, calculatedValue).asTry().flatMap {
                 case Success(_) =>
                   // Flawless victory!
-                  reporter.onSuccessfullyRemoteSetValue()
+                  reporter.onSuccessfullyRemoteSetValue(key)
                   logger.info(s"remoteSetOrGet successfully set key $key while under lock")
                   Future.successful(calculatedValue)
                 case Failure(e) =>
@@ -315,13 +336,13 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
           remote.get(key).asTry().flatMap {
             case Success(Some(remoteValue)) if !remoteValue.hasExpired(ttl, now) =>
               // Current value is good, just return it
-              reporter.onRemoteCacheHitAfterGenerating()
+              reporter.onRemoteCacheHitAfterGenerating(key)
               Future.successful(remoteValue)
             case Success(_) =>
               // The value is missing or has expired
               // Let's start from scratch because we need to be able to set or get a good value
               // Note: do not increment retry because this isn't an error
-              reporter.onStillTryingToLockOrGet()
+              reporter.onStillTryingToLockOrGet(key)
               logger.info(s"remoteSetOrGet couldn't lock key $key and didn't found good value on remote")
               remoteSetOrGet(key, calculatedValue, remote, currentRetry = currentRetry)
             case Failure(e) =>

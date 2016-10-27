@@ -29,8 +29,10 @@ import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.{Failure, Success, Try}
 import spray.util.Timestamp
 
-final class ExpiringLruCache[V](maxCapacity: Long, initialCapacity: Int,
-                                timeToLive: Duration, timeToIdle: Duration) extends Cache[V] with ignition.core.cache.ExpiringMultipleLevelCache.LocalCache[V] {
+final class ExpiringLruLocalCache[V](maxCapacity: Long,
+                                     initialCapacity: Int = 16,
+                                     timeToLive: Duration = Duration.Inf,
+                                     timeToIdle: Duration = Duration.Inf) extends Cache[V] with ignition.core.cache.ExpiringMultipleLevelCache.LocalCache[V] {
   require(!timeToLive.isFinite || !timeToIdle.isFinite || timeToLive > timeToIdle,
     s"timeToLive($timeToLive) must be greater than timeToIdle($timeToIdle)")
 
