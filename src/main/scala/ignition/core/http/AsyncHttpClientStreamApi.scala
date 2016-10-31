@@ -4,7 +4,7 @@ import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
 import akka.util.Timeout
-import spray.http.{HttpEntity, HttpMethod, HttpMethods}
+import spray.http.{HttpEntity, HttpHeader, HttpMethod, HttpMethods}
 
 import scala.concurrent.Future
 import scala.concurrent.duration._
@@ -48,6 +48,7 @@ object AsyncHttpClientStreamApi {
                      credentials: Option[Credentials] = None,
                      method: HttpMethod = HttpMethods.GET,
                      body: HttpEntity = HttpEntity.Empty,
+                     headers: List[HttpHeader] = List.empty,
                      requestConfiguration: Option[RequestConfiguration] = None)
 
   case class RequestException(message: String, response: StreamResponse) extends RuntimeException(message)
