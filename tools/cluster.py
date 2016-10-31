@@ -49,7 +49,7 @@ default_key_file = os.path.expanduser('~/.ssh/ignition_key.pem')
 default_ami = None # will be decided based on spark-ec2 list
 default_master_ami = None
 default_env = 'dev'
-default_spark_version = '2.0.0'
+default_spark_version = '2.0.1'
 custom_builds = {
 #    '1.5.1': 'https://s3.amazonaws.com/chaordic-ignition-public/spark-1.5.1-bin-cdh4.7.1.tgz'
 }
