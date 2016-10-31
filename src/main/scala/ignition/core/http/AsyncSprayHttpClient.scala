@@ -61,17 +61,17 @@ trait AsyncSprayHttpClient extends AsyncHttpClientStreamApi {
       List(Authorization(credentials = BasicHttpCredentials(username = credentials.user, password = credentials.password)))
 
     private def toSprayRequest(request: Request): HttpRequest = request match {
-      case Request(uri, params, Some(credentials), method, body, _) if params.isEmpty =>
-          HttpRequest(method = method, uri = request.url, headers = credentials, entity = body)
+      case Request(uri, params, Some(credentials), method, body, headers, _) if params.isEmpty =>
+          HttpRequest(method = method, uri = request.url, headers = credentials ++ headers, entity = body)
 
-      case Request(uri, params, Some(credentials), method, body, _) =>
-        HttpRequest(method = method, uri = toUriString(request.url, params), headers = credentials, entity = body)
+      case Request(uri, params, Some(credentials), method, body, headers, _) =>
+        HttpRequest(method = method, uri = toUriString(request.url, params), headers = credentials ++ headers, entity = body)
 
-      case Request(uri, params, None, method, body, _) if params.isEmpty =>
-        HttpRequest(method = method, uri = toUriString(request.url), entity = body)
+      case Request(uri, params, None, method, body, headers, _) if params.isEmpty =>
+        HttpRequest(method = method, uri = toUriString(request.url), entity = body, headers = headers)
 
-      case Request(uri, params, None, method, body, _) =>
-        HttpRequest(method = method, uri = toUriString(request.url, params), entity = body)
+      case Request(uri, params, None, method, body, headers, _) =>
+        HttpRequest(method = method, uri = toUriString(request.url, params), entity = body, headers = headers)
     }
 
     private def toSprayHostConnectorSetup(uri: Uri, conf: Option[AsyncHttpClientStreamApi.RequestConfiguration]): HostConnectorSetup = {
