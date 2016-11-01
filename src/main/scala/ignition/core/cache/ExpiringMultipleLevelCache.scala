@@ -44,9 +44,10 @@ object ExpiringMultipleLevelCache {
     }
 
     def apply(key: String, genValue: () ⇒ Future[V])(implicit ec: ExecutionContext): Future[V]
+    def set(key: String, value: V)(implicit ec: ExecutionContext): Future[Unit]
   }
 
-  trait LocalCache[V] extends GenericCache[V] {
+  trait LocalCache[V] {
     def get(key: Any): Option[Future[V]]
     def set(key: Any, value: V): Unit
   }
@@ -219,13 +220,57 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
     result
   }
 
+  // This should be used carefully because it will overwrite the remote value without
+  // any lock, which may cause a desynchronization between the local and remote cache on other instances
+  // Note that if any tryGenerateAndSet is in progress, this will wait until it's finished before setting local/remote
+  override def set(key: String, value: V)(implicit ec: ExecutionContext): Future[Unit] = {
+    logger.info(s"set, key $key: got a call to overwrite local and remote values")
+    val startTime = System.nanoTime()
+    val promise = Promise[TimestampedValue[V]]()
+    val future = promise.future
+    def doIt() = {
+      val tValue = timestamp(value)
+      localCache.foreach(_.set(key, tValue))
+      val result = remoteRW.map(remote => remoteOverwrite(key, tValue, remote, startTime)).getOrElse(Future.successful(tValue))
+      promise.completeWith(result)
+      tempUpdate.remove(key, future)
+    }
+    tempUpdate.put(key, future) match {
+      case null =>
+        doIt()
+        future.map(_ => ())
+      case fTrying =>
+        fTrying.onComplete { case _ => doIt() }
+        future.map(_ => ())
+    }
+  }
+
+  // Overwrite remote value without lock, retrying on error
+  private def remoteOverwrite(key: String, calculatedValue: TimestampedValue[V], remote: RemoteCacheRW[TimestampedValue[V]], nanoStartTime: Long, currentRetry: Int = 0)(implicit ec: ExecutionContext): Future[TimestampedValue[V]] = {
+    remote.set(key, calculatedValue).asTry().flatMap {
+      case Success(_) =>
+        reporter.onSuccessfullyRemoteSetValue(key, elapsedTime(nanoStartTime))
+        logger.info(s"remoteForceSet successfully overwritten key $key")
+        Future.successful(calculatedValue)
+      case Failure(e) =>
+        reporter.onRemoteError(key, e, elapsedTime(nanoStartTime))
+        logger.warn(s"remoteForceSet, key $key: got error setting the value, scheduling retry $currentRetry of $maxErrorsToRetryOnRemote", e)
+        // Retry failure
+        after(backoffOnError, scheduler) {
+          remoteOverwrite(key, calculatedValue, remote, nanoStartTime, currentRetry = currentRetry + 1)
+        }
+    }
+  }
+
+
   // Note: this method may return a failed future, but it will never cache it
   // Our main purpose here is to avoid multiple local calls to generate new promises/futures in parallel,
   // so we use this Map keep everyone in sync
   // This is similar to how spray cache works
   private def tryGenerateAndSet(key: String, genValue: () => Future[V], nanoStartTime: Long)(implicit ec: ExecutionContext): Future[TimestampedValue[V]] = {
     val promise = Promise[TimestampedValue[V]]()
-    tempUpdate.putIfAbsent(key, promise.future) match {
+    val future = promise.future
+    tempUpdate.putIfAbsent(key, future) match {
       case null =>
         logger.info(s"tryGenerateAndSet, key $key: got request for generating and none in progress found, calling canonicalValueGenerator")
         canonicalValueGenerator(key, genValue, nanoStartTime).onComplete {
@@ -233,22 +278,22 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
             reporter.onGeneratedWithSuccess(key, elapsedTime(nanoStartTime))
             localCache.foreach(_.set(key, v))
             promise.trySuccess(v)
-            tempUpdate.remove(key)
+            tempUpdate.remove(key, future)
           case Success(v) =>
             // Have we generated/got an expired value!?
             reporter.onUnexpectedBehaviour(key, elapsedTime(nanoStartTime))
             logger.warn(s"tryGenerateAndSet, key $key: unexpectedly generated/got an expired value: $v")
             localCache.foreach(_.set(key, v))
             promise.trySuccess(v)
-            tempUpdate.remove(key)
+            tempUpdate.remove(key, future)
           case Failure(e) =>
             // We don't save failures to cache
             // There is no need to log here, canonicalValueGenerator will log everything already
             reporter.onGeneratedWithFailure(key, e, elapsedTime(nanoStartTime))
             promise.tryFailure(e)
-            tempUpdate.remove(key)
+            tempUpdate.remove(key, future)
         }
-        promise.future
+        future
       case fTrying =>
         // If someone call us while a future is running, we return the running future
         logger.info(s"tryGenerateAndSet, key $key: got request for generating but an existing one is current in progress")
@@ -406,4 +451,6 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
       }
     }
   }
+
+
 }

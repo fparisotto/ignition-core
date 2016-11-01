@@ -117,12 +117,6 @@ final class ExpiringLruLocalCache[V](maxCapacity: Long,
         oldEntry.promise.trySuccess(value)
     }
   }
-
-  // Method required by ExpiringMultipleLevelCache.LocalCache
-  override def apply(key: String, genValue: () => Future[V])(implicit ec: ExecutionContext): Future[V] = {
-    val sprayCache: Cache[V] = this
-    sprayCache.apply(key, genValue)
-  }
 }
 
 private[caching] class Entry[T](val promise: Promise[T]) {
