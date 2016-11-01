@@ -20,7 +20,7 @@
 package spray.caching
 
 import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap
-import ignition.core.cache.ExpiringMultipleLevelCache
+import ignition.core.cache.ExpiringMultiLevelCache
 
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
@@ -32,7 +32,7 @@ import spray.util.Timestamp
 final class ExpiringLruLocalCache[V](maxCapacity: Long,
                                      initialCapacity: Int = 16,
                                      timeToLive: Duration = Duration.Inf,
-                                     timeToIdle: Duration = Duration.Inf) extends Cache[V] with ignition.core.cache.ExpiringMultipleLevelCache.LocalCache[V] {
+                                     timeToIdle: Duration = Duration.Inf) extends Cache[V] with ignition.core.cache.ExpiringMultiLevelCache.LocalCache[V] {
   require(!timeToLive.isFinite || !timeToIdle.isFinite || timeToLive > timeToIdle,
     s"timeToLive($timeToLive) must be greater than timeToIdle($timeToIdle)")
 

@@ -16,7 +16,7 @@ import scala.concurrent.{ExecutionContext, Future, Promise}
 import scala.util.control.NonFatal
 import scala.util.{Failure, Success, Try}
 
-object ExpiringMultipleLevelCache {
+object ExpiringMultiLevelCache {
   case class TimestampedValue[V](date: DateTime, value: V) {
     def hasExpired(ttl: FiniteDuration, now: DateTime): Boolean = {
       date.plus(ttl.toMillis).isBefore(now)
@@ -106,17 +106,17 @@ object ExpiringMultipleLevelCache {
 }
 
 
-import ignition.core.cache.ExpiringMultipleLevelCache._
+import ignition.core.cache.ExpiringMultiLevelCache._
 
 
-case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
-                                         localCache: Option[LocalCache[TimestampedValue[V]]],
-                                         remoteRW: Option[RemoteCacheRW[TimestampedValue[V]]] = None,
-                                         remoteLockTTL: FiniteDuration = 5.seconds,
-                                         reporter: ExpiringMultipleLevelCache.ReporterCallback = ExpiringMultipleLevelCache.NoOpReporter,
-                                         maxErrorsToRetryOnRemote: Int = 5,
-                                         backoffOnLockAcquire: FiniteDuration = 50.milliseconds,
-                                         backoffOnError: FiniteDuration = 50.milliseconds)(implicit scheduler: Scheduler) extends GenericCache[V] {
+case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
+                                      localCache: Option[LocalCache[TimestampedValue[V]]],
+                                      remoteRW: Option[RemoteCacheRW[TimestampedValue[V]]] = None,
+                                      remoteLockTTL: FiniteDuration = 5.seconds,
+                                      reporter: ExpiringMultiLevelCache.ReporterCallback = ExpiringMultiLevelCache.NoOpReporter,
+                                      maxErrorsToRetryOnRemote: Int = 5,
+                                      backoffOnLockAcquire: FiniteDuration = 50.milliseconds,
+                                      backoffOnError: FiniteDuration = 50.milliseconds)(implicit scheduler: Scheduler) extends GenericCache[V] {
 
   private val logger = LoggerFactory.getLogger(getClass)
 

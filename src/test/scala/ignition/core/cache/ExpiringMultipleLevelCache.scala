@@ -1,7 +1,7 @@
 package ignition.core.cache
 
 import akka.actor.ActorSystem
-import ignition.core.cache.ExpiringMultipleLevelCache.TimestampedValue
+import ignition.core.cache.ExpiringMultiLevelCache.TimestampedValue
 import org.scalatest.{FlatSpec, Matchers}
 import spray.caching.ExpiringLruLocalCache
 
@@ -15,13 +15,13 @@ class ExpiringMultipleLevelCacheSpec extends FlatSpec with Matchers {
 
   "ExpiringMultipleLevelCache" should "calculate a value on cache miss and return it" in {
     val local = new ExpiringLruLocalCache[TimestampedValue[Data]](100)
-    val cache = ExpiringMultipleLevelCache[Data](1.minute, Option(local))
+    val cache = ExpiringMultiLevelCache[Data](1.minute, Option(local))
     Await.result(cache("key", () => Future.successful(Data("success"))), 1.minute) shouldBe Data("success")
   }
 
   it should "calculate a value on cache miss and return a failed future of the calculation" in {
     val local = new ExpiringLruLocalCache[TimestampedValue[Data]](100)
-    val cache = ExpiringMultipleLevelCache[Data](1.minute, Option(local))
+    val cache = ExpiringMultiLevelCache[Data](1.minute, Option(local))
 
     class MyException(s: String) extends Exception(s)
 
