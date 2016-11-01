@@ -32,19 +32,19 @@ object ExpiringMultiLevelCache {
         * Returns either the cached Future for the key or evaluates the given call-by-name argument
         * which produces either a value instance of type `V` or a `Future[V]`.
         */
-      def apply(magnet: ⇒ ValueMagnet[V])(implicit ec: ExecutionContext): Future[V] =
+      def apply(magnet: ⇒ ValueMagnet[V])(implicit ec: ExecutionContext, scheduler: Scheduler): Future[V] =
         cache.apply(key, () ⇒ try magnet.future catch { case NonFatal(e) ⇒ Future.failed(e) })
 
       /**
         * Returns either the cached Future for the key or evaluates the given function which
         * should lead to eventual completion of the promise.
         */
-      def apply[U](f: Promise[V] ⇒ U)(implicit ec: ExecutionContext): Future[V] =
+      def apply[U](f: Promise[V] ⇒ U)(implicit ec: ExecutionContext, scheduler: Scheduler): Future[V] =
         cache.apply(key, () ⇒ { val p = Promise[V](); f(p); p.future })
     }
 
-    def apply(key: String, genValue: () ⇒ Future[V])(implicit ec: ExecutionContext): Future[V]
-    def set(key: String, value: V)(implicit ec: ExecutionContext): Future[Unit]
+    def apply(key: String, genValue: () ⇒ Future[V])(implicit ec: ExecutionContext, scheduler: Scheduler): Future[V]
+    def set(key: String, value: V)(implicit ec: ExecutionContext, scheduler: Scheduler): Future[Unit]
   }
 
   trait LocalCache[V] {
@@ -53,12 +53,12 @@ object ExpiringMultiLevelCache {
   }
 
   trait RemoteWritableCache[V] {
-    def set(key: String, value: V)(implicit ec: ExecutionContext): Future[Unit]
-    def setLock(key: String, ttl: FiniteDuration)(implicit ec: ExecutionContext): Future[Boolean]
+    def set(key: String, value: V)(implicit ec: ExecutionContext, scheduler: Scheduler): Future[Unit]
+    def setLock(key: String, ttl: FiniteDuration)(implicit ec: ExecutionContext, scheduler: Scheduler): Future[Boolean]
   }
 
   trait RemoteReadableCache[V] {
-    def get(key: String)(implicit ec: ExecutionContext): Future[Option[V]]
+    def get(key: String)(implicit ec: ExecutionContext, scheduler: Scheduler): Future[Option[V]]
   }
 
   trait RemoteCacheRW[V] extends RemoteReadableCache[V] with RemoteWritableCache[V]
@@ -116,7 +116,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
                                       reporter: ExpiringMultiLevelCache.ReporterCallback = ExpiringMultiLevelCache.NoOpReporter,
                                       maxErrorsToRetryOnRemote: Int = 5,
                                       backoffOnLockAcquire: FiniteDuration = 50.milliseconds,
-                                      backoffOnError: FiniteDuration = 50.milliseconds)(implicit scheduler: Scheduler) extends GenericCache[V] {
+                                      backoffOnError: FiniteDuration = 50.milliseconds) extends GenericCache[V] {
 
   private val logger = LoggerFactory.getLogger(getClass)
 
@@ -136,7 +136,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
   // The idea is simple, have two caches: remote and local
   // with values that will eventually expire but still be left on the cache
   // while a new value is asynchronously being calculated/retrieved
-  override def apply(key: String, genValue: () => Future[V])(implicit ec: ExecutionContext): Future[V] = {
+  override def apply(key: String, genValue: () => Future[V])(implicit ec: ExecutionContext, scheduler: Scheduler): Future[V] = {
     // The local cache is always the first try. We'll only look the remote if the local value is missing or has expired
     val startTime = System.nanoTime()
     val result = localCache.flatMap(_.get(key).map(_.asTry())) match {
@@ -223,7 +223,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
   // This should be used carefully because it will overwrite the remote value without
   // any lock, which may cause a desynchronization between the local and remote cache on other instances
   // Note that if any tryGenerateAndSet is in progress, this will wait until it's finished before setting local/remote
-  override def set(key: String, value: V)(implicit ec: ExecutionContext): Future[Unit] = {
+  override def set(key: String, value: V)(implicit ec: ExecutionContext, scheduler: Scheduler): Future[Unit] = {
     logger.info(s"set, key $key: got a call to overwrite local and remote values")
     val startTime = System.nanoTime()
     val promise = Promise[TimestampedValue[V]]()
@@ -246,7 +246,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
   }
 
   // Overwrite remote value without lock, retrying on error
-  private def remoteOverwrite(key: String, calculatedValue: TimestampedValue[V], remote: RemoteCacheRW[TimestampedValue[V]], nanoStartTime: Long, currentRetry: Int = 0)(implicit ec: ExecutionContext): Future[TimestampedValue[V]] = {
+  private def remoteOverwrite(key: String, calculatedValue: TimestampedValue[V], remote: RemoteCacheRW[TimestampedValue[V]], nanoStartTime: Long, currentRetry: Int = 0)(implicit ec: ExecutionContext, scheduler: Scheduler): Future[TimestampedValue[V]] = {
     remote.set(key, calculatedValue).asTry().flatMap {
       case Success(_) =>
         reporter.onSuccessfullyRemoteSetValue(key, elapsedTime(nanoStartTime))
@@ -267,7 +267,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
   // Our main purpose here is to avoid multiple local calls to generate new promises/futures in parallel,
   // so we use this Map keep everyone in sync
   // This is similar to how spray cache works
-  private def tryGenerateAndSet(key: String, genValue: () => Future[V], nanoStartTime: Long)(implicit ec: ExecutionContext): Future[TimestampedValue[V]] = {
+  private def tryGenerateAndSet(key: String, genValue: () => Future[V], nanoStartTime: Long)(implicit ec: ExecutionContext, scheduler: Scheduler): Future[TimestampedValue[V]] = {
     val promise = Promise[TimestampedValue[V]]()
     val future = promise.future
     tempUpdate.putIfAbsent(key, future) match {
@@ -306,7 +306,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
   // the remote cache and read by the other instances
   // Unless of course there is some error getting stuff from remote cache
   // in which case the locally generated value may be returned to avoid further delays
-  protected def canonicalValueGenerator(key: String, genValue: () => Future[V], nanoStartTime: Long)(implicit ec: ExecutionContext) = {
+  protected def canonicalValueGenerator(key: String, genValue: () => Future[V], nanoStartTime: Long)(implicit ec: ExecutionContext, scheduler: Scheduler) = {
     val fGeneratedValue = Try { genValue().map(timestamp) }.asFutureTry()
     val finalValue: Future[TimestampedValue[V]] = fGeneratedValue.flatMap {
       case Success(generatedValue) =>
@@ -345,7 +345,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
   private def remoteGetNonExpiredValue(key: String,
                                        remote: RemoteCacheRW[TimestampedValue[V]],
                                        nanoStartTime: Long,
-                                       currentRetry: Int = 0)(implicit ec: ExecutionContext): Future[TimestampedValue[V]] = {
+                                       currentRetry: Int = 0)(implicit ec: ExecutionContext, scheduler: Scheduler): Future[TimestampedValue[V]] = {
     remote.get(key).asTry().flatMap {
       case Success(Some(remoteValue)) if !remoteValue.hasExpired(ttl, now) =>
         logger.info(s"remoteGetNonExpiredValue, key $key: got a good value")
@@ -374,7 +374,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
                              calculatedValue: TimestampedValue[V],
                              remote: RemoteCacheRW[TimestampedValue[V]],
                              nanoStartTime: Long,
-                             currentRetry: Int = 0)(implicit ec: ExecutionContext): Future[TimestampedValue[V]] = {
+                             currentRetry: Int = 0)(implicit ec: ExecutionContext, scheduler: Scheduler): Future[TimestampedValue[V]] = {
     if (currentRetry > maxErrorsToRetryOnRemote) {
       // Use our calculated value as it's the best we can do
       reporter.onRemoteGiveUp(key, elapsedTime(nanoStartTime))
