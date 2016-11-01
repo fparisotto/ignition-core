@@ -2,6 +2,8 @@ package ignition.core.cache
 
 import java.util.concurrent.TimeUnit
 
+import akka.actor.Scheduler
+import akka.pattern.after
 import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap
 import ignition.core.utils.DateUtils._
 import ignition.core.utils.FutureUtils._
@@ -107,11 +109,13 @@ import ignition.core.cache.ExpiringMultipleLevelCache._
 
 
 case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
-                                         localCache: LocalCache[TimestampedValue[V]],
+                                         localCache: Option[LocalCache[TimestampedValue[V]]],
                                          remoteRW: Option[RemoteCacheRW[TimestampedValue[V]]] = None,
                                          remoteLockTTL: FiniteDuration = 5.seconds,
                                          reporter: ExpiringMultipleLevelCache.ReporterCallback = ExpiringMultipleLevelCache.NoOpReporter,
-                                         maxErrorsToRetryOnRemote: Int = 5) extends GenericCache[V] {
+                                         maxErrorsToRetryOnRemote: Int = 5,
+                                         backoffOnLockAcquire: FiniteDuration = 50.milliseconds,
+                                         backoffOnError: FiniteDuration = 50.milliseconds)(implicit scheduler: Scheduler) extends GenericCache[V] {
 
   private val logger = LoggerFactory.getLogger(getClass)
 
@@ -134,7 +138,7 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
   override def apply(key: String, genValue: () => Future[V])(implicit ec: ExecutionContext): Future[V] = {
     // The local cache is always the first try. We'll only look the remote if the local value is missing or has expired
     val startTime = System.nanoTime()
-    val result = localCache.get(key).map(_.asTry()) match {
+    val result = localCache.flatMap(_.get(key).map(_.asTry())) match {
       case Some(future) =>
         future.flatMap {
           case Success(localValue) if !localValue.hasExpired(ttl, now) =>
@@ -147,7 +151,7 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
               case Success(Some(remoteValue)) if !remoteValue.hasExpired(ttl, now) =>
                 // Remote is good, set locally and return it
                 reporter.onRemoteCacheHit(key, elapsedTime(startTime))
-                localCache.set(key, remoteValue)
+                localCache.foreach(_.set(key, remoteValue))
                 Future.successful(remoteValue.value)
               case Success(Some(expiredRemote)) =>
                 // Expired local and expired remote, return the most recent of them, async update both
@@ -162,7 +166,7 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
                 Future.successful(expiredLocalValue.value)
               case Failure(e) =>
                 reporter.onRemoteError(key, e, elapsedTime(startTime))
-                logger.warn(s"ExpiringMultipleLevelCache.apply, key: $key expired local value and failed to get remote", e)
+                logger.warn(s"apply, key: $key expired local value and failed to get remote", e)
                 tryGenerateAndSet(key, genValue, startTime)
                 Future.successful(expiredLocalValue.value)
             }
@@ -175,7 +179,7 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
           case Failure(e) =>
             // This is almost impossible to happen because it's local and we don't save failed values
             reporter.onLocalError(key, e, elapsedTime(startTime))
-            logger.warn(s"ExpiringMultipleLevelCache.apply, key: $key got a failed future from cache!? This is almost impossible!", e)
+            logger.warn(s"apply, key: $key got a failed future from cache!? This is almost impossible!", e)
             tryGenerateAndSet(key, genValue, startTime).map(_.value)
         }
       case None if remoteRW.nonEmpty =>
@@ -184,7 +188,7 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
           case Success(Some(remoteValue)) if !remoteValue.hasExpired(ttl, now) =>
             // Remote is good, set locally and return it
             reporter.onRemoteCacheHit(key, elapsedTime(startTime))
-            localCache.set(key, remoteValue)
+            localCache.foreach(_.set(key, remoteValue))
             Future.successful(remoteValue.value)
           case Success(Some(expiredRemote)) =>
             // Expired remote, return the it, async update
@@ -197,7 +201,7 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
             tryGenerateAndSet(key, genValue, startTime).map(_.value)
           case Failure(e) =>
             reporter.onRemoteError(key, e, elapsedTime(startTime))
-            logger.warn(s"ExpiringMultipleLevelCache.apply, key: $key expired local value and no remote configured", e)
+            logger.warn(s"apply, key: $key expired local value and remote error", e)
             tryGenerateAndSet(key, genValue, startTime).map(_.value)
         }
       case None if remoteRW.isEmpty =>
@@ -223,17 +227,18 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
     val promise = Promise[TimestampedValue[V]]()
     tempUpdate.putIfAbsent(key, promise.future) match {
       case null =>
+        logger.info(s"tryGenerateAndSet, key $key: got request for generating and none in progress found, calling canonicalValueGenerator")
         canonicalValueGenerator(key, genValue, nanoStartTime).onComplete {
           case Success(v) if !v.hasExpired(ttl, now) =>
             reporter.onGeneratedWithSuccess(key, elapsedTime(nanoStartTime))
-            localCache.set(key, v)
+            localCache.foreach(_.set(key, v))
             promise.trySuccess(v)
             tempUpdate.remove(key)
           case Success(v) =>
             // Have we generated/got an expired value!?
             reporter.onUnexpectedBehaviour(key, elapsedTime(nanoStartTime))
             logger.warn(s"tryGenerateAndSet, key $key: unexpectedly generated/got an expired value: $v")
-            localCache.set(key, v)
+            localCache.foreach(_.set(key, v))
             promise.trySuccess(v)
             tempUpdate.remove(key)
           case Failure(e) =>
@@ -246,6 +251,7 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
         promise.future
       case fTrying =>
         // If someone call us while a future is running, we return the running future
+        logger.info(s"tryGenerateAndSet, key $key: got request for generating but an existing one is current in progress")
         fTrying
     }
   }
@@ -297,19 +303,22 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
                                        currentRetry: Int = 0)(implicit ec: ExecutionContext): Future[TimestampedValue[V]] = {
     remote.get(key).asTry().flatMap {
       case Success(Some(remoteValue)) if !remoteValue.hasExpired(ttl, now) =>
+        logger.info(s"remoteGetNonExpiredValue, key $key: got a good value")
         Future.successful(remoteValue)
       case Success(_) =>
         Future.failed(new Exception("No good value found on remote"))
       case Failure(e) =>
         if (currentRetry >= maxErrorsToRetryOnRemote) {
           reporter.onRemoteGiveUp(key, elapsedTime(nanoStartTime))
-          logger.error(s"remoteGetWithRetryOnError, key $key: returning calculated value because we got more than $maxErrorsToRetryOnRemote errors", e)
+          logger.error(s"remoteGetNonExpiredValue, key $key: returning calculated value because we got more than $maxErrorsToRetryOnRemote errors", e)
           Future.failed(e)
         } else {
           reporter.onRemoteError(key, e, elapsedTime(nanoStartTime))
-          logger.warn(s"remoteGetWithRetryOnError, key $key: got error trying to get value, retry $currentRetry of $maxErrorsToRetryOnRemote", e)
+          logger.warn(s"remoteGetNonExpiredValue, key $key: got error trying to get value, scheduling retry $currentRetry of $maxErrorsToRetryOnRemote", e)
           // Retry
-          remoteGetNonExpiredValue(key, remote, nanoStartTime, currentRetry = currentRetry + 1)
+          after(backoffOnError, scheduler) {
+            remoteGetNonExpiredValue(key, remote, nanoStartTime, currentRetry = currentRetry + 1)
+          }
         }
     }
   }
@@ -348,21 +357,26 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
                   Future.successful(calculatedValue)
                 case Failure(e) =>
                   reporter.onRemoteError(key, e, elapsedTime(nanoStartTime))
-                  logger.warn(s"remoteSetOrGet, key $key: got error setting the value, retry $currentRetry of $maxErrorsToRetryOnRemote", e)
+                  logger.warn(s"remoteSetOrGet, key $key: got error setting the value, scheduling retry $currentRetry of $maxErrorsToRetryOnRemote", e)
                   // Retry failure
-                  remoteSetOrGet(key, calculatedValue, remote, nanoStartTime, currentRetry = currentRetry + 1)
+                  after(backoffOnError, scheduler) {
+                    remoteSetOrGet(key, calculatedValue, remote, nanoStartTime, currentRetry = currentRetry + 1)
+                  }
               }
             case Failure(e) =>
               reporter.onRemoteError(key, e, elapsedTime(nanoStartTime))
-              logger.warn(s"remoteSetOrGet, key $key: got error getting remote value with lock, retry $currentRetry of $maxErrorsToRetryOnRemote", e)
+              logger.warn(s"remoteSetOrGet, key $key: got error getting remote value with lock, scheduling retry $currentRetry of $maxErrorsToRetryOnRemote", e)
               // Retry failure
-              remoteSetOrGet(key, calculatedValue, remote, nanoStartTime, currentRetry = currentRetry + 1)
+              after(backoffOnError, scheduler) {
+                remoteSetOrGet(key, calculatedValue, remote, nanoStartTime, currentRetry = currentRetry + 1)
+              }
           }
         case Success(false) =>
           // Someone got the lock, let's take a look at the value
           remote.get(key).asTry().flatMap {
             case Success(Some(remoteValue)) if !remoteValue.hasExpired(ttl, now) =>
               // Current value is good, just return it
+              logger.info(s"remoteSetOrGet couldn't lock key $key but found a good on remote afterwards")
               reporter.onRemoteCacheHitAfterGenerating(key, elapsedTime(nanoStartTime))
               Future.successful(remoteValue)
             case Success(_) =>
@@ -370,19 +384,25 @@ case class ExpiringMultipleLevelCache[V](ttl: FiniteDuration,
               // Let's start from scratch because we need to be able to set or get a good value
               // Note: do not increment retry because this isn't an error
               reporter.onStillTryingToLockOrGet(key, elapsedTime(nanoStartTime))
-              logger.info(s"remoteSetOrGet couldn't lock key $key and didn't found good value on remote")
-              remoteSetOrGet(key, calculatedValue, remote, nanoStartTime, currentRetry = currentRetry)
+              logger.info(s"remoteSetOrGet couldn't lock key $key and didn't found good value on remote, scheduling retry")
+              after(backoffOnLockAcquire, scheduler) {
+                remoteSetOrGet(key, calculatedValue, remote, nanoStartTime, currentRetry = currentRetry)
+              }
             case Failure(e) =>
               reporter.onRemoteError(key, e, elapsedTime(nanoStartTime))
-              logger.warn(s"remoteSetOrGet, key $key: got error getting remote value without lock, retry $currentRetry of $maxErrorsToRetryOnRemote", e)
+              logger.warn(s"remoteSetOrGet, key $key: got error getting remote value without lock, scheduling retry $currentRetry of $maxErrorsToRetryOnRemote", e)
               // Retry
-              remoteSetOrGet(key, calculatedValue, remote, nanoStartTime, currentRetry = currentRetry + 1)
+              after(backoffOnError, scheduler) {
+                remoteSetOrGet(key, calculatedValue, remote, nanoStartTime, currentRetry = currentRetry + 1)
+              }
           }
         case Failure(e) =>
           // Retry failure
           reporter.onRemoteError(key, e, elapsedTime(nanoStartTime))
-          logger.warn(s"remoteSetOrGet, key $key: got error trying to set lock, retry $currentRetry of $maxErrorsToRetryOnRemote", e)
-          remoteSetOrGet(key, calculatedValue, remote, nanoStartTime, currentRetry = currentRetry + 1)
+          logger.warn(s"remoteSetOrGet, key $key: got error trying to set lock, scheduling retry $currentRetry of $maxErrorsToRetryOnRemote", e)
+          after(backoffOnError, scheduler) {
+            remoteSetOrGet(key, calculatedValue, remote, nanoStartTime, currentRetry = currentRetry + 1)
+          }
       }
     }
   }
