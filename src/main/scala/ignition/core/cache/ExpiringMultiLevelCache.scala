@@ -7,7 +7,7 @@ import akka.pattern.after
 import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap
 import ignition.core.utils.DateUtils._
 import ignition.core.utils.FutureUtils._
-import org.joda.time.DateTime
+import org.joda.time.{DateTime, DateTimeZone}
 import org.slf4j.LoggerFactory
 import spray.caching.ValueMagnet
 
@@ -81,6 +81,7 @@ object ExpiringMultiLevelCache {
     def onLocalError(key: String, e: Throwable, elapsedTime: FiniteDuration): Unit
     def onRemoteError(key: String, t: Throwable, elapsedTime: FiniteDuration): Unit
     def onRemoteGiveUp(key: String, elapsedTime: FiniteDuration): Unit
+    def onSanityLocalValueCheckFailedResult(key: String, result: String, elapsedTime: FiniteDuration): Unit
   }
 
   object NoOpReporter extends ReporterCallback {
@@ -101,7 +102,7 @@ object ExpiringMultiLevelCache {
     override def onCompletedWithSuccess(key: String, elapsedTime: FiniteDuration): Unit = {}
     override def onGeneratedWithFailure(key: String, e: Throwable, elapsedTime: FiniteDuration): Unit = {}
     override def onGeneratedWithSuccess(key: String, elapsedTime: FiniteDuration): Unit = {}
-
+    override def onSanityLocalValueCheckFailedResult(key: String, result: String, elapsedTime: FiniteDuration): Unit = {}
   }
 }
 
@@ -116,7 +117,8 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
                                       reporter: ExpiringMultiLevelCache.ReporterCallback = ExpiringMultiLevelCache.NoOpReporter,
                                       maxErrorsToRetryOnRemote: Int = 5,
                                       backoffOnLockAcquire: FiniteDuration = 50.milliseconds,
-                                      backoffOnError: FiniteDuration = 50.milliseconds) extends GenericCache[V] {
+                                      backoffOnError: FiniteDuration = 50.milliseconds,
+                                      sanityLocalValueCheck: Boolean = false) extends GenericCache[V] {
 
   private val logger = LoggerFactory.getLogger(getClass)
 
@@ -145,7 +147,11 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
           case Success(localValue) if !localValue.hasExpired(ttl, now) =>
             // We have locally a good value, just return it
             reporter.onLocalCacheHit(key, elapsedTime(startTime))
-            Future.successful(localValue.value)
+            // But if we're paranoid, let's check if the local value is consistent with remote
+            if (sanityLocalValueCheck)
+              remoteRW.map(remote => sanityLocalValueCheck(key, localValue, remote, startTime)).getOrElse(Future.successful(localValue.value))
+            else
+              Future.successful(localValue.value)
           case Success(expiredLocalValue) if remoteRW.nonEmpty =>
             // We have locally an expired value, but we can check a remote cache for better value
             remoteRW.get.get(key).asTry().flatMap {
@@ -242,6 +248,43 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
       case fTrying =>
         fTrying.onComplete { case _ => doIt() }
         future.map(_ => ())
+    }
+  }
+
+  private def sanityLocalValueCheck(key: String, localValue: TimestampedValue[V], remote: RemoteCacheRW[TimestampedValue[V]], startTime: Long)(implicit ec: ExecutionContext, scheduler: Scheduler): Future[V] = {
+    remote.get(key).asTry().flatMap {
+      case Success(Some(remoteValue)) if remoteValue == localValue =>
+        // Remote is the same as local, return any of them
+        Future.successful(remoteValue.value)
+      case Success(Some(remoteValue)) =>
+        // Something is different, try to figure it out
+        val valuesResult = if (remoteValue.value == localValue.value) "same-value" else "different-values"
+        val dateResult = if (remoteValue.date.isAfter(localValue.date))
+          "remote-is-older-than-local"
+        else if (localValue.date.isAfter(remoteValue.date))
+          "local-is-older-than-remote"
+        else if (localValue.date.isEqual(localValue.date))
+          "same-date"
+        else if (localValue.date.withZone(DateTimeZone.UTC).isEqual(localValue.date.withZone(DateTimeZone.UTC)))
+          "same-date-on-utc"
+        else
+          "impossible-dates"
+        val remoteExpired = remoteValue.hasExpired(ttl, now)
+        val localExpired = localValue.hasExpired(ttl, now)
+        val finalResult = s"$valuesResult-$dateResult-remote-expired-${remoteExpired}-local-expired-${localExpired}"
+        logger.warn(s"sanityLocalValueCheck, key $key: got different results for local $localValue and remote $remoteValue ($finalResult)")
+        reporter.onSanityLocalValueCheckFailedResult(key, finalResult, elapsedTime(startTime))
+        // return remote to keep everyone consistent
+        Future.successful(remoteValue.value)
+      case Success(None) =>
+        val localExpired = localValue.hasExpired(ttl, now)
+        val finalResult = s"missing-remote-local-expired-${localExpired}"
+        logger.warn(s"sanityLocalValueCheck, key $key: got local $localValue but no remote ($finalResult)")
+        Future.successful(localValue.value)
+      case Failure(e) =>
+        reporter.onRemoteError(key, e, elapsedTime(startTime))
+        logger.warn(s"sanityLocalValueCheck, key: $key  failed to get remote", e)
+        Future.successful(localValue.value)
     }
   }
 
