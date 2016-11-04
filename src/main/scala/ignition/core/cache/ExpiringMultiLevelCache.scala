@@ -7,7 +7,7 @@ import akka.pattern.after
 import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap
 import ignition.core.utils.DateUtils._
 import ignition.core.utils.FutureUtils._
-import org.joda.time.{DateTime, DateTimeZone}
+import org.joda.time.{DateTime, DateTimeZone, Interval}
 import org.slf4j.LoggerFactory
 import spray.caching.ValueMagnet
 
@@ -126,7 +126,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
     .maximumWeightedCapacity(Long.MaxValue)
     .build()
 
-  protected def now = DateTime.now
+  protected def now = DateTime.now.withZone(DateTimeZone.UTC)
 
   private def timestamp(v: V) = TimestampedValue(now, v)
 
@@ -257,12 +257,14 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
         // Remote is the same as local, return any of them
         Future.successful(remoteValue.value)
       case Success(Some(remoteValue)) =>
+        def datesAreClose(date1: DateTime, date2: DateTime): Boolean = Math.abs(new Interval(date1, date2).toDurationMillis) <= 5000
         // Something is different, try to figure it out
         val valuesResult = if (remoteValue.value == localValue.value) "same-value" else "different-values"
+        val closeDatesSuffix = if (datesAreClose(remoteValue.date, localValue.date)) "-but-close-dates" else ""
         val dateResult = if (remoteValue.date.isAfter(localValue.date))
-          "remote-is-older-than-local"
+          s"remote-is-newer-than-local$closeDatesSuffix"
         else if (localValue.date.isAfter(remoteValue.date))
-          "local-is-older-than-remote"
+          s"local-is-newer-than-remote$closeDatesSuffix"
         else if (localValue.date.isEqual(localValue.date))
           "same-date"
         else if (localValue.date.withZone(DateTimeZone.UTC).isEqual(localValue.date.withZone(DateTimeZone.UTC)))
