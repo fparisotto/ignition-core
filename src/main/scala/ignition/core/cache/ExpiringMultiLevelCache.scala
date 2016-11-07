@@ -149,7 +149,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
             reporter.onLocalCacheHit(key, elapsedTime(startTime))
             // But if we're paranoid, let's check if the local value is consistent with remote
             if (sanityLocalValueCheck)
-              remoteRW.map(remote => sanityLocalValueCheck(key, localValue, remote, startTime)).getOrElse(Future.successful(localValue.value))
+              remoteRW.map(remote => sanityLocalValueCheck(key, localValue, remote, genValue, startTime)).getOrElse(Future.successful(localValue.value))
             else
               Future.successful(localValue.value)
           case Success(expiredLocalValue) if remoteRW.nonEmpty =>
@@ -251,7 +251,7 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
     }
   }
 
-  private def sanityLocalValueCheck(key: String, localValue: TimestampedValue[V], remote: RemoteCacheRW[TimestampedValue[V]], startTime: Long)(implicit ec: ExecutionContext, scheduler: Scheduler): Future[V] = {
+  private def sanityLocalValueCheck(key: String, localValue: TimestampedValue[V], remote: RemoteCacheRW[TimestampedValue[V]], genValue: () => Future[V], startTime: Long)(implicit ec: ExecutionContext, scheduler: Scheduler): Future[V] = {
     remote.get(key).asTry().flatMap {
       case Success(Some(remoteValue)) if remoteValue == localValue =>
         // Remote is the same as local, return any of them
@@ -282,7 +282,9 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
         val localExpired = localValue.hasExpired(ttl, now)
         val finalResult = s"missing-remote-local-expired-${localExpired}"
         logger.warn(s"sanityLocalValueCheck, key $key: got local $localValue but no remote ($finalResult)")
-        Future.successful(localValue.value)
+        reporter.onSanityLocalValueCheckFailedResult(key, finalResult, elapsedTime(startTime))
+        // Try generate it to keep a behaviour equivalent to remote only
+        tryGenerateAndSet(key, genValue, startTime).map(_.value)
       case Failure(e) =>
         reporter.onRemoteError(key, e, elapsedTime(startTime))
         logger.warn(s"sanityLocalValueCheck, key: $key  failed to get remote", e)
