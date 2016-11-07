@@ -11,6 +11,7 @@ object FutureUtils {
 
   def blockingFuture[T](body: =>T)(implicit ec: ExecutionContext): Future[T] = Future { blocking { body } }
 
+
   implicit class FutureImprovements[V](future: Future[V]) {
     def toOptionOnFailure(errorHandler: (Throwable) => Option[V])(implicit ec: ExecutionContext): Future[Option[V]] = {
       future.map(Option.apply).recover { case t => errorHandler(t) }
@@ -34,6 +35,18 @@ object FutureUtils {
 
     def withTimeout(timeout: => Throwable)(implicit duration: FiniteDuration, system: ActorSystem): Future[V] = {
       Future.firstCompletedOf(Seq(future, akka.pattern.after(duration, system.scheduler)(Future.failed(timeout))(system.dispatcher)))(system.dispatcher)
+    }
+  }
+
+  implicit class TryFutureImprovements[V](future: Try[Future[V]]) {
+    // Works like asTry(), but will also wrap the outer Try inside the Future
+    def asFutureTry()(implicit ec: ExecutionContext): Future[Try[V]] = {
+      future match {
+        case Success(f) =>
+          f.asTry()
+        case Failure(e) =>
+          Future.successful(Failure(e))
+      }
     }
   }
 
