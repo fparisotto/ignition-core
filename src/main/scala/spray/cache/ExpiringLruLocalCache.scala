@@ -20,14 +20,13 @@
 package spray.caching
 
 import com.googlecode.concurrentlinkedhashmap.ConcurrentLinkedHashMap
-import ignition.core.cache.ExpiringMultiLevelCache
+import spray.util.Timestamp
 
 import scala.annotation.tailrec
 import scala.collection.JavaConverters._
 import scala.concurrent.duration.Duration
 import scala.concurrent.{ExecutionContext, Future, Promise}
-import scala.util.{Failure, Success, Try}
-import spray.util.Timestamp
+import scala.util.{Failure, Success}
 
 final class ExpiringLruLocalCache[V](maxCapacity: Long,
                                      initialCapacity: Int = 16,
@@ -119,7 +118,7 @@ final class ExpiringLruLocalCache[V](maxCapacity: Long,
   }
 }
 
-private[caching] class Entry[T](val promise: Promise[T]) {
+private[caching] class ExpiringLruLocalCacheEntry[T](val promise: Promise[T]) {
   @volatile var created = Timestamp.now
   @volatile var lastAccessed = Timestamp.now
   def future = promise.future
