@@ -257,14 +257,12 @@ case class ExpiringMultiLevelCache[V](ttl: FiniteDuration,
         // Remote is the same as local, return any of them
         Future.successful(remoteValue.value)
       case Success(Some(remoteValue)) =>
-        def datesAreClose(date1: DateTime, date2: DateTime): Boolean = Math.abs(new Interval(date1, date2).toDurationMillis) <= 5000
         // Something is different, try to figure it out
         val valuesResult = if (remoteValue.value == localValue.value) "same-value" else "different-values"
-        val closeDatesSuffix = if (datesAreClose(remoteValue.date, localValue.date)) "-but-close-dates" else ""
         val dateResult = if (remoteValue.date.isAfter(localValue.date))
-          s"remote-is-newer-than-local$closeDatesSuffix"
+          s"remote-is-newer-than-local"
         else if (localValue.date.isAfter(remoteValue.date))
-          s"local-is-newer-than-remote$closeDatesSuffix"
+          s"local-is-newer-than-remote"
         else if (localValue.date.isEqual(localValue.date))
           "same-date"
         else if (localValue.date.withZone(DateTimeZone.UTC).isEqual(localValue.date.withZone(DateTimeZone.UTC)))
