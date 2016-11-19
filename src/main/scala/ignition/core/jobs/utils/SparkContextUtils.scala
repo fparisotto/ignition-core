@@ -24,6 +24,7 @@ import scala.reflect.ClassTag
 import scala.util.{Failure, Success, Try}
 import scala.util.control.NonFatal
 import ignition.core.utils.ExceptionUtils._
+import ignition.core.utils.CollectionUtils._
 import org.slf4j.LoggerFactory
 
 
@@ -47,7 +48,23 @@ object SparkContextUtils {
     }
   }
 
+  object S3SplittedPath {
+    val s3Pattern = "s3[an]?://([^/]+)(.+)".r
+
+    def from(fullPath: String): Option[S3SplittedPath] =
+      fullPath match {
+        case s3Pattern(bucket, prefix) => Option(S3SplittedPath(bucket, prefix.dropWhile(_ == '/')))
+        case _ => None
+      }
+  }
+
+  case class S3SplittedPath(bucket: String, key: String) {
+    def join: String = s"s3a://$bucket/$key"
+  }
+
   case class HadoopFile(path: String, isDir: Boolean, size: Long)
+
+  case class WithOptDate[E](date: Option[DateTime], value: E)
 
   implicit class SparkContextImprovements(sc: SparkContext) {
 
@@ -353,15 +370,6 @@ object SparkContextUtils {
         union
     }
 
-    def parallelListAndReadTextFiles(paths: List[String],
-                                     maxBytesPerPartition: Long,
-                                     minPartitions: Int,
-                                     sizeBasedFileHandling: SizeBasedFileHandling = SizeBasedFileHandling())
-                                    (implicit dateExtractor: PathDateExtractor): RDD[String] = {
-      val foundFiles = paths.flatMap(smartList(_))
-      parallelReadTextFiles(foundFiles, maxBytesPerPartition = maxBytesPerPartition, minPartitions = minPartitions, sizeBasedFileHandling = sizeBasedFileHandling)
-    }
-
     def parallelReadTextFiles(files: List[HadoopFile],
                               maxBytesPerPartition: Long = 128 * 1000 * 1000,
                               minPartitions: Int = 100,
@@ -446,38 +454,42 @@ object SparkContextUtils {
       innerListFiles(List(HadoopFile(path, isDir = true, 0)))
     }
 
-    def s3ListCommonPrefixes(bucket: String, prefix: String, delimiter: String = "/")
-                            (implicit s3: AmazonS3Client): Stream[String] = {
+    def s3ListCommonPrefixes(path: S3SplittedPath, delimiter: String = "/")
+                            (implicit s3: AmazonS3Client): Stream[S3SplittedPath] = {
       def inner(current: ObjectListing): Stream[String] =
-        if (current.isTruncated)
+        if (current.isTruncated) {
+          logger.trace(s"list common prefixed truncated for ${path.bucket} ${path.key}: ${current.getCommonPrefixes}")
           current.getCommonPrefixes.toStream ++ inner(s3.listNextBatchOfObjects(current))
-        else
+        } else {
+          logger.trace(s"list common prefixed finished for ${path.bucket} ${path.key}: ${current.getCommonPrefixes}")
           current.getCommonPrefixes.toStream
+        }
 
-      val request = new ListObjectsRequest(bucket, prefix, null, delimiter, 1000)
-      inner(s3.listObjects(request))
+      val request = new ListObjectsRequest(path.bucket, path.key, null, delimiter, 1000)
+      inner(s3.listObjects(request)).map(prefix => path.copy(key = prefix))
     }
 
-    def s3ListObjects(bucket: String, prefix: String)
+    def s3ListObjects(path: S3SplittedPath)
                      (implicit s3: AmazonS3Client): Stream[S3ObjectSummary] = {
       def inner(current: ObjectListing): Stream[S3ObjectSummary] =
-        if (current.isTruncated)
+        if (current.isTruncated) {
+          logger.trace(s"list objects truncated for ${path.bucket} ${path.key}: $current")
           current.getObjectSummaries.toStream ++ inner(s3.listNextBatchOfObjects(current))
-        else
+        } else {
+          logger.trace(s"list objects finished for ${path.bucket} ${path.key}")
           current.getObjectSummaries.toStream
+        }
 
-      inner(s3.listObjects(bucket, prefix))
+      inner(s3.listObjects(path.bucket, path.key))
     }
 
-    def s3NarrowPaths(bucket: String,
-                      prefix: String,
-                      delimiter: String = "/",
+    def s3NarrowPaths(splittedPath: S3SplittedPath,
                       inclusiveStartDate: Boolean = true,
                       startDate: Option[DateTime] = None,
                       inclusiveEndDate: Boolean = true,
                       endDate: Option[DateTime] = None,
                       ignoreHours: Boolean = true)
-                     (implicit s3: AmazonS3Client, pathDateExtractor: PathDateExtractor): Stream[String] = {
+                     (implicit s3: AmazonS3Client, pathDateExtractor: PathDateExtractor): Stream[WithOptDate[S3SplittedPath]] = {
 
       def isGoodDate(date: DateTime): Boolean = {
         val startDateToCompare =  startDate.map(date => if (ignoreHours) date.withTimeAtStartOfDay() else date)
@@ -487,48 +499,53 @@ object SparkContextUtils {
         goodStartDate && goodEndDate
       }
 
-      def classifyPath(path: String): Either[String, (String, DateTime)] =
-        Try(pathDateExtractor.extractFromPath(s"s3a://$bucket/$path")) match {
+      def classifyPath(path: S3SplittedPath): Either[S3SplittedPath, (S3SplittedPath, DateTime)] =
+        Try(pathDateExtractor.extractFromPath(path.join)) match {
           case Success(date) => Right(path -> date)
           case Failure(_) => Left(path)
         }
 
-      val commonPrefixes = s3ListCommonPrefixes(bucket, prefix, delimiter).map(classifyPath)
+      val commonPrefixes = s3ListCommonPrefixes(splittedPath).map(classifyPath)
 
+      logger.trace(s"s3NarrowPaths for $splittedPath, common prefixes: $commonPrefixes")
       if (commonPrefixes.isEmpty)
-        Stream(s"s3a://$bucket/$prefix")
+        Stream(WithOptDate(None, splittedPath))
       else
         commonPrefixes.toStream.flatMap {
-          case Left(prefixWithoutDate) => s3NarrowPaths(bucket, prefixWithoutDate, delimiter, inclusiveStartDate, startDate, inclusiveEndDate, endDate, ignoreHours)
-          case Right((prefixWithDate, date)) if isGoodDate(date) => Stream(s"s3a://$bucket/$prefixWithDate")
+          case Left(prefixWithoutDate) =>
+            logger.trace(s"s3NarrowPaths prefixWithoutDate: $prefixWithoutDate")
+            s3NarrowPaths(prefixWithoutDate, inclusiveStartDate, startDate, inclusiveEndDate, endDate, ignoreHours)
+          case Right((prefixWithDate, date)) if isGoodDate(date) => Stream(WithOptDate(Option(date), prefixWithDate))
           case Right(_) => Stream.empty
         }
     }
 
-    private def s3List(path: String,
-                       inclusiveStartDate: Boolean,
-                       startDate: Option[DateTime],
-                       inclusiveEndDate: Boolean,
-                       endDate: Option[DateTime],
-                       exclusionPattern: Option[String])
-                      (implicit s3: AmazonS3Client, dateExtractor: PathDateExtractor): Stream[S3ObjectSummary] = {
+    // Sorted from most recent to least recent path
+    private def sortPaths[P](paths: Stream[WithOptDate[P]]): Stream[WithOptDate[P]] = {
+      paths.sortBy { p => p.date.getOrElse(new DateTime(1970, 1, 1, 1, 1)) }(Ordering[DateTime].reverse)
+    }
 
-      val s3Pattern = "s3[an]?://([^/]+)(.+)".r
+    private def sortedS3List(path: String,
+                             inclusiveStartDate: Boolean,
+                             startDate: Option[DateTime],
+                             inclusiveEndDate: Boolean,
+                             endDate: Option[DateTime],
+                             exclusionPattern: Option[String])
+                            (implicit s3: AmazonS3Client, dateExtractor: PathDateExtractor): Stream[WithOptDate[Array[S3ObjectSummary]]] = {
 
-      def extractBucketAndPrefix(path: String): Option[(String, String)] = path match {
-        case s3Pattern(bucket, prefix) => Option(bucket -> prefix.dropWhile(_ == '/'))
-        case _ => None
-      }
 
-      extractBucketAndPrefix(path) match {
-        case Some((pathBucket, pathPrefix)) =>
-          s3NarrowPaths(pathBucket, pathPrefix, inclusiveStartDate = inclusiveStartDate, inclusiveEndDate = inclusiveEndDate,
-            startDate = startDate, endDate = endDate).flatMap(extractBucketAndPrefix).flatMap {
-            case (bucket, prefix) => s3ListObjects(bucket, prefix)
-          }
+      S3SplittedPath.from(path) match {
+        case Some(splittedPath) =>
+          val prefixes: Stream[WithOptDate[S3SplittedPath]] =
+            s3NarrowPaths(splittedPath, inclusiveStartDate = inclusiveStartDate, inclusiveEndDate = inclusiveEndDate,
+              startDate = startDate, endDate = endDate)
+
+          sortPaths(prefixes)
+            .map { case WithOptDate(date, path) => WithOptDate(date, s3ListObjects(path).toArray) } // Will list the most recent path first and only if needed the others
         case _ => Stream.empty
       }
     }
+
 
     def listAndFilterFiles(path: String,
                            requireSuccess: Boolean = false,
@@ -546,85 +563,79 @@ object SparkContextUtils {
       def isSuccessFile(file: HadoopFile): Boolean =
         file.path.endsWith("_SUCCESS") || file.path.endsWith("_FINISHED")
 
-      def extractDateFromFile(file: HadoopFile): Option[DateTime] =
-        Try(dateExtractor.extractFromPath(file.path)).toOption
+      def excludePatternValidation(file: HadoopFile): Boolean =
+        exclusionPattern.map(pattern => !file.path.matches(pattern)).getOrElse(true)
 
-      def excludePatternValidation(file: HadoopFile): Option[HadoopFile] =
-        exclusionPattern match {
-          case Some(pattern) if file.path.matches(pattern) => None
-          case Some(_) | None => Option(file)
-        }
+      def endsWithValidation(file: HadoopFile): Boolean =
+        endsWith.map { pattern =>
+          file.path.endsWith(pattern) || isSuccessFile(file)
+        }.getOrElse(true)
 
-      def endsWithValidation(file: HadoopFile): Option[HadoopFile] =
-        endsWith match {
-          case Some(pattern) if file.path.endsWith(pattern) => Option(file)
-          case Some(_) if isSuccessFile(file) => Option(file)
-          case Some(_) => None
-          case None => Option(file)
-        }
-
-      def applyPredicate(file: HadoopFile): Option[HadoopFile] =
-        if (predicate(file)) Option(file) else None
-
-      def dateValidation(file: HadoopFile): Option[HadoopFile] = {
-        val tryDate = extractDateFromFile(file)
+      def dateValidation(tryDate: Option[DateTime]): Boolean = {
         if (tryDate.isEmpty && ignoreMalformedDates)
-          Option(file)
+          true
         else {
           val date = tryDate.get
           val goodStartDate = startDate.isEmpty || (inclusiveStartDate && date.saneEqual(startDate.get) || date.isAfter(startDate.get))
-          val goodEndDate = endDate.isEmpty || (inclusiveEndDate && date.saneEqual(endDate.get) || date.isBefore(endDate.get))
-          if (goodStartDate && goodEndDate) Option(file) else None
+          def goodEndDate = endDate.isEmpty || (inclusiveEndDate && date.saneEqual(endDate.get) || date.isBefore(endDate.get))
+          goodStartDate && goodEndDate
         }
       }
 
-      val preValidations: HadoopFile => Boolean = hadoopFile => {
-        val validatedFile = for {
-          _ <- excludePatternValidation(hadoopFile)
-          _ <- endsWithValidation(hadoopFile)
-          _ <- dateValidation(hadoopFile)
-          valid <- applyPredicate(hadoopFile)
-        } yield valid
-        validatedFile.isDefined
-      }
-
-      val preFilteredFiles = smartList(path, inclusiveStartDate = inclusiveStartDate, inclusiveEndDate = inclusiveEndDate,
-        startDate = startDate, endDate = endDate, exclusionPattern = exclusionPattern).filter(preValidations)
-
-      val filesByDate = preFilteredFiles.groupBy(extractDateFromFile).collect {
-        case (date, files) => date.getOrElse(new DateTime(1970, 1, 1, 1, 1)) -> files
-      }
-
-      val posFilteredFiles =
+      def successFileValidation(files: WithOptDate[Array[HadoopFile]]): Boolean = {
         if (requireSuccess)
-          filesByDate.filter { case (_, files) => files.exists(isSuccessFile) }
+          files.value.exists(isSuccessFile)
         else
-          filesByDate
+          true
+      }
+
+      def preValidations(files: WithOptDate[Array[HadoopFile]]): Option[WithOptDate[Array[HadoopFile]]] = {
+        if (!dateValidation(files.date) || !successFileValidation(files))
+          None
+        else {
+          val filtered = files.copy(value = files.value
+            .filter(excludePatternValidation).filter(endsWithValidation).filter(predicate))
+          if (filtered.value.isEmpty)
+            None
+          else
+            Option(filtered)
+        }
+      }
+
+      val groupedAndSortedByDateFiles = sortedSmartList(path, inclusiveStartDate = inclusiveStartDate, inclusiveEndDate = inclusiveEndDate,
+        startDate = startDate, endDate = endDate, exclusionPattern = exclusionPattern).flatMap(preValidations)
 
       val allFiles = if (lastN.isDefined)
-        posFilteredFiles.toList.sortBy(_._1).reverse.take(lastN.get).flatMap(_._2)
+        groupedAndSortedByDateFiles.take(lastN.get).flatMap(_.value)
       else
-        posFilteredFiles.toList.flatMap(_._2)
+        groupedAndSortedByDateFiles.flatMap(_.value)
 
-      allFiles.sortBy(_.path)
+      allFiles.sortBy(_.path).toList
     }
 
-    def smartList(path: String,
-                  inclusiveStartDate: Boolean = false,
-                  startDate: Option[DateTime] = None,
-                  inclusiveEndDate: Boolean = false,
-                  endDate: Option[DateTime] = None,
-                  exclusionPattern: Option[String] = None)(implicit pathDateExtractor: PathDateExtractor): Stream[HadoopFile] = {
+    def sortedSmartList(path: String,
+                        inclusiveStartDate: Boolean = false,
+                        startDate: Option[DateTime] = None,
+                        inclusiveEndDate: Boolean = false,
+                        endDate: Option[DateTime] = None,
+                        exclusionPattern: Option[String] = None)(implicit pathDateExtractor: PathDateExtractor): Stream[WithOptDate[Array[HadoopFile]]] = {
 
       def toHadoopFile(s3Object: S3ObjectSummary): HadoopFile =
         HadoopFile(s"s3a://${s3Object.getBucketName}/${s3Object.getKey}", isDir = false, s3Object.getSize)
 
-      def listPath(path: String): Stream[HadoopFile] = {
+      def listPath(path: String): Stream[WithOptDate[Array[HadoopFile]]] = {
         if (path.startsWith("s3")) {
-          s3List(path, inclusiveStartDate = inclusiveStartDate, startDate = startDate, inclusiveEndDate = inclusiveEndDate,
-            endDate = endDate, exclusionPattern = exclusionPattern)(amazonS3ClientFromEnvironmentVariables, pathDateExtractor).map(toHadoopFile)
+          sortedS3List(path, inclusiveStartDate = inclusiveStartDate, startDate = startDate, inclusiveEndDate = inclusiveEndDate,
+            endDate = endDate, exclusionPattern = exclusionPattern)(amazonS3ClientFromEnvironmentVariables, pathDateExtractor).map {
+            case WithOptDate(date, paths) => WithOptDate(date, paths.map(toHadoopFile).toArray)
+          }
         } else {
-          driverListFiles(path).toStream
+          val pathsWithDate: Stream[WithOptDate[Iterable[HadoopFile]]] = driverListFiles(path)
+            .map(p => (Try { pathDateExtractor.extractFromPath(p.path) }.toOption, p))
+            .groupByKey()
+            .map { case (date, path) => WithOptDate(date, path) }
+            .toStream
+          sortPaths(pathsWithDate).map { case WithOptDate(date, paths) => WithOptDate(date, paths.toArray) }
         }
       }
 
