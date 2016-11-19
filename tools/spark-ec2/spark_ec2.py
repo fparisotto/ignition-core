@@ -107,60 +107,6 @@ DEFAULT_SPARK_EC2_GITHUB_REPO = "https://github.com/amplab/spark-ec2"
 DEFAULT_SPARK_EC2_BRANCH = "branch-2.0"
 
 
-def setup_external_libs(libs):
-    """
-    Download external libraries from PyPI to SPARK_EC2_DIR/lib/ and prepend them to our PATH.
-    """
-    PYPI_URL_PREFIX = "https://pypi.python.org/packages/source"
-    SPARK_EC2_LIB_DIR = os.path.join(SPARK_EC2_DIR, "lib")
-
-    if not os.path.exists(SPARK_EC2_LIB_DIR):
-        print("Downloading external libraries that spark-ec2 needs from PyPI to {path}...".format(
-            path=SPARK_EC2_LIB_DIR
-        ))
-        print("This should be a one-time operation.")
-        os.mkdir(SPARK_EC2_LIB_DIR)
-
-    for lib in libs:
-        versioned_lib_name = "{n}-{v}".format(n=lib["name"], v=lib["version"])
-        lib_dir = os.path.join(SPARK_EC2_LIB_DIR, versioned_lib_name)
-
-        if not os.path.isdir(lib_dir):
-            tgz_file_path = os.path.join(SPARK_EC2_LIB_DIR, versioned_lib_name + ".tar.gz")
-            print(" - Downloading {lib}...".format(lib=lib["name"]))
-            download_stream = urlopen(
-                "{prefix}/{first_letter}/{lib_name}/{lib_name}-{lib_version}.tar.gz".format(
-                    prefix=PYPI_URL_PREFIX,
-                    first_letter=lib["name"][:1],
-                    lib_name=lib["name"],
-                    lib_version=lib["version"]
-                )
-            )
-            with open(tgz_file_path, "wb") as tgz_file:
-                tgz_file.write(download_stream.read())
-            with open(tgz_file_path, "rb") as tar:
-                if hashlib.md5(tar.read()).hexdigest() != lib["md5"]:
-                    print("ERROR: Got wrong md5sum for {lib}.".format(lib=lib["name"]), file=stderr)
-                    sys.exit(1)
-            tar = tarfile.open(tgz_file_path)
-            tar.extractall(path=SPARK_EC2_LIB_DIR)
-            tar.close()
-            os.remove(tgz_file_path)
-            print(" - Finished downloading {lib}.".format(lib=lib["name"]))
-        sys.path.insert(1, lib_dir)
-
-
-# Only PyPI libraries are supported.
-external_libs = [
-    {
-        "name": "boto",
-        "version": "2.34.0",
-        "md5": "5556223d2d0cc4d06dd4829e671dcecd"
-    }
-]
-
-setup_external_libs(external_libs)
-
 import boto
 from boto.ec2.blockdevicemapping import BlockDeviceMapping, BlockDeviceType, EBSBlockDeviceType
 from boto import ec2
