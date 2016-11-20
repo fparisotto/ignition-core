@@ -574,12 +574,13 @@ object SparkContextUtils {
       def dateValidation(tryDate: Option[DateTime]): Boolean = {
         if (tryDate.isEmpty && ignoreMalformedDates)
           true
-        else {
+        else if (tryDate.isDefined) {
           val date = tryDate.get
           val goodStartDate = startDate.isEmpty || (inclusiveStartDate && date.saneEqual(startDate.get) || date.isAfter(startDate.get))
           def goodEndDate = endDate.isEmpty || (inclusiveEndDate && date.saneEqual(endDate.get) || date.isBefore(endDate.get))
           goodStartDate && goodEndDate
-        }
+        } else
+          false
       }
 
       def successFileValidation(files: WithOptDate[Array[HadoopFile]]): Boolean = {
