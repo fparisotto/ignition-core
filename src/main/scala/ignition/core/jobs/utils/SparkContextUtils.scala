@@ -509,7 +509,7 @@ object SparkContextUtils {
 
       logger.trace(s"s3NarrowPaths for $splittedPath, common prefixes: $commonPrefixes")
       if (commonPrefixes.isEmpty)
-        Stream(WithOptDate(None, splittedPath))
+        Stream(WithOptDate(Try(pathDateExtractor.extractFromPath(splittedPath.join)).toOption, splittedPath))
       else
         commonPrefixes.toStream.flatMap {
           case Left(prefixWithoutDate) =>
@@ -571,16 +571,18 @@ object SparkContextUtils {
           file.path.endsWith(pattern) || isSuccessFile(file)
         }.getOrElse(true)
 
-      def dateValidation(tryDate: Option[DateTime]): Boolean = {
+      def dateValidation(files: WithOptDate[Array[HadoopFile]]): Boolean = {
+        val tryDate = files.date
         if (tryDate.isEmpty && ignoreMalformedDates)
           true
-        else if (tryDate.isDefined) {
+        else if (tryDate.isEmpty)
+          throw new Exception(s"Not date found for path $path, expanded files: ${files.value.toList}, consider using ignoreMalformedDates=true if not date is expected on this path")
+        else {
           val date = tryDate.get
           val goodStartDate = startDate.isEmpty || (inclusiveStartDate && date.saneEqual(startDate.get) || date.isAfter(startDate.get))
           def goodEndDate = endDate.isEmpty || (inclusiveEndDate && date.saneEqual(endDate.get) || date.isBefore(endDate.get))
           goodStartDate && goodEndDate
-        } else
-          false
+        }
       }
 
       def successFileValidation(files: WithOptDate[Array[HadoopFile]]): Boolean = {
@@ -591,7 +593,7 @@ object SparkContextUtils {
       }
 
       def preValidations(files: WithOptDate[Array[HadoopFile]]): Option[WithOptDate[Array[HadoopFile]]] = {
-        if (!dateValidation(files.date) || !successFileValidation(files))
+        if (!dateValidation(files) || !successFileValidation(files))
           None
         else {
           val filtered = files.copy(value = files.value
