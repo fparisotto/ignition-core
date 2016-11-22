@@ -593,12 +593,12 @@ object SparkContextUtils {
       }
 
       def preValidations(files: WithOptDate[Array[HadoopFile]]): Option[WithOptDate[Array[HadoopFile]]] = {
-        if (!dateValidation(files) || !successFileValidation(files))
+        if (!successFileValidation(files))
           None
         else {
           val filtered = files.copy(value = files.value
             .filter(excludePatternValidation).filter(endsWithValidation).filter(predicate))
-          if (filtered.value.isEmpty)
+          if (filtered.value.isEmpty || !dateValidation(filtered))
             None
           else
             Option(filtered)
