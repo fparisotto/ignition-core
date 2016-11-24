@@ -35,12 +35,14 @@ case class IntBag(histogram: collection.Map[Long, Long]) {
     }
   }
 
+  def count: Long = histogram.values.sum
+
+  def sum: Long = histogram.map { case (k, f) => k * f }.sum
+
   def avg: Option[Long] = {
-    if (histogram.nonEmpty) {
-      val sum = histogram.map { case (k, f) => k * f }.sum
-      val count = histogram.values.sum
+    if (histogram.nonEmpty)
       Option(sum / count)
-    } else
+    else
       None
   }
 
@@ -51,4 +53,7 @@ case class IntBag(histogram: collection.Map[Long, Long]) {
   def max: Option[Long] = {
     histogram.keys.maxOption
   }
+
+  override def toString: String = s"IntBag(median=$median, count=$count, sum=$sum, avg=$avg, min=$min, max=$max)"
+
 }
