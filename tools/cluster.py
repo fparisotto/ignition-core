@@ -451,6 +451,7 @@ def job_run(cluster_name, job_name, job_mem,
         ssh_call(user=remote_user, host=master, key_file=key_file, args=[tmux_arg], allocate_terminal=True)
 
     if wait_completion:
+        time.sleep(5) # wait job to set up before checking it
         failed = False
         failed_exception = None
         try:

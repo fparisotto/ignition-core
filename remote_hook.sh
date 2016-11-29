@@ -20,11 +20,15 @@ MY_USER=$(whoami)
 # Avoids problems when another user created our control dir
 sudo mkdir -p "${JOB_CONTROL_DIR}"
 sudo chown $MY_USER "${JOB_CONTROL_DIR}"
-sudo chmod -R o+rx /root
-
 
 RUNNING_FILE="${JOB_CONTROL_DIR}/RUNNING"
+# This should be the first thing in the script to avoid the wait remote job thinking we died
 echo $$ > "${RUNNING_FILE}"
+
+
+
+# Let us read the spark home even when the image doesn't give us the permission
+sudo chmod -R o+rx /root
 
 notify_error_and_exit() {
     description="${1}"
