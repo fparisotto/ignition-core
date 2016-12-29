@@ -1,13 +1,12 @@
 package ignition.core.http
 
-import java.net.URL
 import java.util.concurrent.TimeoutException
 
 import akka.actor._
 import akka.io.IO
 import akka.pattern.ask
 import akka.util.Timeout
-
+import ignition.core.http.AsyncHttpClientStreamApi.{Request, RequestConfiguration}
 import spray.can.Http
 import spray.can.Http.HostConnectorSetup
 import spray.can.client.{ClientConnectionSettings, HostConnectorSettings}
@@ -15,13 +14,9 @@ import spray.http.HttpHeaders.Authorization
 import spray.http.StatusCodes.Redirection
 import spray.http._
 
-
-import scala.concurrent.duration._
 import scala.concurrent.{ExecutionContext, Future}
 import scala.language.postfixOps
 import scala.util.control.NonFatal
-
-import ignition.core.http.AsyncHttpClientStreamApi.{Request, RequestConfiguration}
 
 
 trait AsyncSprayHttpClient extends AsyncHttpClientStreamApi {
@@ -51,27 +46,15 @@ trait AsyncSprayHttpClient extends AsyncHttpClientStreamApi {
       case _ => false
     }
 
-    private def toUriString(url: String, params: Map[String, String] = Map.empty) = {
-      def encode(content: String) = java.net.URLEncoder.encode(content, "UTF-8")
-      def encodeParams = params.map { case (k, v) => s"${encode(k)}=${encode(v)}" }.mkString("&")
-      if (params.isEmpty) url else s"$url?${encodeParams}"
-    }
-
     private implicit def toAuthHeader(credentials: AsyncHttpClientStreamApi.Credentials): List[Authorization] =
       List(Authorization(credentials = BasicHttpCredentials(username = credentials.user, password = credentials.password)))
 
     private def toSprayRequest(request: Request): HttpRequest = request match {
-      case Request(uri, params, Some(credentials), method, body, headers, _) if params.isEmpty =>
-          HttpRequest(method = method, uri = request.url, headers = credentials ++ headers, entity = body)
+      case Request(_, params, Some(credentials), method, body, headers, _) =>
+          HttpRequest(method = method, uri = request.uri, headers = credentials ++ headers, entity = body)
 
-      case Request(uri, params, Some(credentials), method, body, headers, _) =>
-        HttpRequest(method = method, uri = toUriString(request.url, params), headers = credentials ++ headers, entity = body)
-
-      case Request(uri, params, None, method, body, headers, _) if params.isEmpty =>
-        HttpRequest(method = method, uri = toUriString(request.url), entity = body, headers = headers)
-
-      case Request(uri, params, None, method, body, headers, _) =>
-        HttpRequest(method = method, uri = toUriString(request.url, params), entity = body, headers = headers)
+      case Request(_, params, None, method, body, headers, _) =>
+        HttpRequest(method = method, uri = request.uri, entity = body, headers = headers)
     }
 
     private def toSprayHostConnectorSetup(uri: Uri, conf: Option[AsyncHttpClientStreamApi.RequestConfiguration]): HostConnectorSetup = {
@@ -109,8 +92,7 @@ trait AsyncSprayHttpClient extends AsyncHttpClientStreamApi {
     }
 
     private def executeSprayRequest(request: Request): Unit = {
-      val url = Uri(request.url)
-      val message = (toSprayRequest(request), toSprayHostConnectorSetup(url, request.requestConfiguration))
+      val message = (toSprayRequest(request), toSprayHostConnectorSetup(request.uri, request.requestConfiguration))
       IO(Http) ! message
     }
 
