@@ -4,7 +4,7 @@ import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
 import akka.util.Timeout
-import spray.http.{HttpEntity, HttpHeader, HttpMethod, HttpMethods}
+import spray.http._
 
 import scala.concurrent.Future
 import scala.concurrent.duration._
@@ -49,7 +49,15 @@ object AsyncHttpClientStreamApi {
                      method: HttpMethod = HttpMethods.GET,
                      body: HttpEntity = HttpEntity.Empty,
                      headers: List[HttpHeader] = List.empty,
-                     requestConfiguration: Option[RequestConfiguration] = None)
+                     requestConfiguration: Option[RequestConfiguration] = None) {
+    val uri: Uri = {
+      // Note: This will guarantee we create a valid request (one with a valid uri). Will throw an exception if invalid
+      if (params.nonEmpty)
+        Uri(url).withQuery(params)
+      else
+        Uri(url)
+    }
+  }
 
   case class RequestException(message: String, response: StreamResponse) extends RuntimeException(message)
 
