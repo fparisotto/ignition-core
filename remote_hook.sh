@@ -86,7 +86,9 @@ JAR_PATH="${JOB_CONTROL_DIR}/Ignition.jar"
 
 cp ${JAR_PATH_SRC} ${JAR_PATH}
 
-export JOB_MASTER=${MASTER}
+# If no $MASTER, then build a url using $SPARK_MASTER_HOST
+export JOB_MASTER=${MASTER:-spark://${SPARK_MASTER_HOST}:7077}
+
 
 if [[ "${USE_YARN}" == "yes" ]]; then
     export YARN_MODE=true
@@ -97,13 +99,13 @@ if [[ "${USE_YARN}" == "yes" ]]; then
 fi
 
 if [[ "${JOB_NAME}" == "shell" ]]; then
-    sudo -E ${SPARK_HOME}/bin/spark-shell --jars ${JAR_PATH} --driver-memory "${DRIVER_HEAP_SIZE}" --driver-java-options "-Djava.io.tmpdir=/mnt -verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps" --executor-memory "${SPARK_MEM_PARAM}" || notify_error_and_exit "Execution failed for shell"
+    sudo -E ${SPARK_HOME}/bin/spark-shell --master "${JOB_MASTER}" --jars ${JAR_PATH} --driver-memory "${DRIVER_HEAP_SIZE}" --driver-java-options "-Djava.io.tmpdir=/media/tmp -verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps" --executor-memory "${SPARK_MEM_PARAM}" || notify_error_and_exit "Execution failed for shell"
 elif [[ "${JOB_NAME}" == "zeppelin" ]]; then
     install_and_run_zeppelin
 else
     JOB_OUTPUT="${JOB_CONTROL_DIR}/output.log"
     tail -F "${JOB_OUTPUT}" &
-    sudo -E "${SPARK_HOME}/bin/spark-submit" --master "${JOB_MASTER}" --driver-memory "${DRIVER_HEAP_SIZE}" --driver-java-options "-Djava.io.tmpdir=/mnt -verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps" --class "${MAIN_CLASS}" ${JAR_PATH} "${JOB_NAME}" --runner-date "${JOB_DATE}" --runner-tag "${JOB_TAG}" --runner-user "${JOB_USER}" --runner-master "${JOB_MASTER}" --runner-executor-memory "${SPARK_MEM_PARAM}" >& "${JOB_OUTPUT}" || notify_error_and_exit "Execution failed for job ${JOB_WITH_TAG}"
+    sudo -E "${SPARK_HOME}/bin/spark-submit" --master "${JOB_MASTER}" --driver-memory "${DRIVER_HEAP_SIZE}" --driver-java-options "-Djava.io.tmpdir=/media/tmp -verbose:gc -XX:-PrintGCDetails -XX:+PrintGCTimeStamps" --class "${MAIN_CLASS}" ${JAR_PATH} "${JOB_NAME}" --runner-date "${JOB_DATE}" --runner-tag "${JOB_TAG}" --runner-user "${JOB_USER}" --runner-master "${JOB_MASTER}" --runner-executor-memory "${SPARK_MEM_PARAM}" >& "${JOB_OUTPUT}" || notify_error_and_exit "Execution failed for job ${JOB_WITH_TAG}"
 fi
 
 touch "${JOB_CONTROL_DIR}/SUCCESS"

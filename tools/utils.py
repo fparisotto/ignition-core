@@ -20,9 +20,10 @@ def parse_nodes(active_instances, cluster_name):
     slave_nodes = []
     for instance in active_instances:
         group_names = [g.name for g in instance.groups]
-        if (cluster_name + "-master") in group_names:
+        # This can handle both spark-ec2 and flintrock clusters
+        if (cluster_name + "-master") in group_names or (("flintrock-" + cluster_name) in group_names and instance.tags.get('flintrock-role') == 'master'):
             master_nodes.append(instance)
-        elif (cluster_name + "-slaves") in group_names:
+        elif (cluster_name + "-slaves") in group_names or (("flintrock-" + cluster_name) in group_names and instance.tags.get('flintrock-role') in ('slave', None)):
             slave_nodes.append(instance)
     return (master_nodes, slave_nodes)
 
@@ -121,4 +122,3 @@ def check_call_with_timeout(args, stdin=None, stdout=None,
     if p.returncode != 0:
         raise subprocess.CalledProcessError(p.returncode, args)
     return p.returncode
-
