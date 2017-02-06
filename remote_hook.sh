@@ -28,7 +28,8 @@ echo $$ > "${RUNNING_FILE}"
 
 
 # Let us read the spark home even when the image doesn't give us the permission
-sudo chmod -R o+rx /root
+sudo chmod o+rx /root
+sudo chmod -R o+rx /root/spark
 
 notify_error_and_exit() {
     description="${1}"
