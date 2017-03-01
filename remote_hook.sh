@@ -31,6 +31,8 @@ echo $$ > "${RUNNING_FILE}"
 sudo chmod o+rx /root
 sudo chmod -R o+rx /root/spark
 
+sudo mkdir -p /media/tmp/spark-events
+
 notify_error_and_exit() {
     description="${1}"
     echo "Exiting because: ${description}"
