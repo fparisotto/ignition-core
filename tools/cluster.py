@@ -41,6 +41,7 @@ default_worker_instances = '1'
 default_executor_instances = '1'
 default_master_instance_type = ''
 default_driver_heap_size = '12G'
+default_min_root_ebs_size_gb = '30'
 default_region = 'us-east-1'
 default_zone = default_region + 'b'
 default_key_id = 'ignition_key'
@@ -217,6 +218,7 @@ def launch(cluster_name, slaves,
            # TODO: consider implementing in flintrock
            master_instance_type=default_master_instance_type,
            executor_instances=default_executor_instances,
+           min_root_ebs_size_gb=default_min_root_ebs_size_gb,
            retries_on_same_cluster=5,
            max_clusters_to_create=5,
            minimum_percentage_healthy_slaves=0.9,
@@ -281,6 +283,7 @@ def launch(cluster_name, slaves,
                                  '--ec2-region', region,
                                  '--ec2-availability-zone', zone,
                                  '--ec2-instance-type', instance_type,
+                                 '--ec2-min-root-ebs-size-gb', min_root_ebs_size_gb,
                                  '--assume-yes',
                                  '--install-spark',
                                  '--install-hdfs',
