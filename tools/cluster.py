@@ -137,12 +137,13 @@ def chdir_to_ec2_script_and_get_path():
     return ec2_script_path
 
 
-def call_ec2_script(args, timeout_total_minutes, timeout_inactivity_minutes):
+def call_ec2_script(args, timeout_total_minutes, timeout_inactivity_minutes, stdout=None):
     ec2_script_path = chdir_to_ec2_script_and_get_path()
     return check_call_with_timeout(['/usr/bin/env', 'python3', '-u',
                                     ec2_script_path] + args,
-                                   timeout_total_minutes=timeout_total_minutes,
-                                   timeout_inactivity_minutes=timeout_inactivity_minutes)
+                                    stdout=stdout,
+                                    timeout_total_minutes=timeout_total_minutes,
+                                    timeout_inactivity_minutes=timeout_inactivity_minutes)
 
 
 def cluster_exists(cluster_name, region):
@@ -712,7 +713,8 @@ def killall_jobs(cluster_name, key_file=default_key_file,
 
 def check_flintrock_installation():
     try:
-        call_ec2_script(['--help'], 1 , 1)
+        with file('/dev/null', 'w') as devnull:
+            call_ec2_script(['--help'], 1 , 1, stdout=devnull)
     except:
         setup = os.path.join(ec2_script_base_path(), 'setup.py')
         if not os.path.exists(setup):
@@ -726,10 +728,10 @@ Or checkout ignition with:
         else:
             log.error('''
 Some dependencies are missing. For an Ubuntu system, try the following:
-sudo apt-get install python3-yaml libyaml-dev
+sudo apt-get install python3-yaml libyaml-dev python3-pip
 sudo python3 -m pip install -U pip packaging setuptools
 cd {flintrock}
-sudo pip3 -r requirements/user.pip
+sudo pip3 install -r requirements/user.pip
         '''.format(flintrock=ec2_script_base_path()))
         sys.exit(1)
 
@@ -740,5 +742,5 @@ parser.add_commands([job_run, job_attach, wait_for_job,
                      kill_job, killall_jobs, collect_job_results], namespace="jobs")
 
 if __name__ == '__main__':
-
+    check_flintrock_installation()
     parser.dispatch()
