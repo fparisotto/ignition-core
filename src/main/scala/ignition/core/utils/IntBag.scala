@@ -13,6 +13,10 @@ object IntBag {
 }
 
 case class IntBag(histogram: collection.Map[Long, Long]) {
+
+  def +(n: Long) =
+    this ++ IntBag.from(n :: Nil)
+
   def ++(other: IntBag): IntBag = {
     val newHistogram = scala.collection.mutable.HashMap.empty[Long, Long]
     (histogram.keySet ++ other.histogram.keySet).foreach(k => newHistogram += (k -> (histogram.getOrElse(k, 0L) + other.histogram.getOrElse(k, 0L))))
