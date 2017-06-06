@@ -8,7 +8,15 @@ import org.jets3t.service.security.AWSCredentials
 import org.jets3t.service.{Constants, Jets3tProperties}
 
 
-class S3Client {
+object S3Client {
+  def fromEnv(): S3Client =
+    new S3Client(System.getenv("AWS_ACCESS_KEY_ID"), System.getenv("AWS_SECRET_ACCESS_KEY"))
+
+  def withKeys(accessKey: String, secretKey: String): S3Client =
+    new S3Client(accessKey, secretKey)
+}
+
+class S3Client(accessKey: String, secretKey: String) {
 
   val jets3tProperties = {
     val jets3tProperties = Jets3tProperties.getInstance(Constants.JETS3T_PROPERTIES_FILENAME)
@@ -21,10 +29,7 @@ class S3Client {
     jets3tProperties
   }
 
-  val service = new RestS3Service(
-    new AWSCredentials(System.getenv("AWS_ACCESS_KEY_ID"), System.getenv("AWS_SECRET_ACCESS_KEY")),
-    null, null, jets3tProperties
-  )
+  val service = new RestS3Service(new AWSCredentials(accessKey, secretKey), null, null, jets3tProperties)
 
   def writeContent(bucket: String, key: String, content: String, contentType: String = "text/plain"): S3Object = {
     val obj = new S3Object(key, content)
