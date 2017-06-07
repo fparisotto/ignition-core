@@ -73,6 +73,8 @@ object CoreJobRunner {
       val sparkConf = new SparkConf()
       sparkConf.set("spark.executor.memory", config.executorMemory)
 
+      sparkConf.set("spark.eventLog.dir", "file:///media/tmp/spark-events")
+
       sparkConf.setMaster(config.master)
       sparkConf.setAppName(appName)
 

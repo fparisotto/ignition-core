@@ -12,9 +12,8 @@ from argh import ArghParser, CommandError
 from argh.decorators import named, arg
 import subprocess
 from subprocess import check_output, check_call
-from itertools import chain
 from utils import tag_instances, get_masters, get_active_nodes
-from utils import check_call_with_timeout, ProcessTimeoutException
+from utils import check_call_with_timeout
 import os
 import sys
 from datetime import datetime
@@ -40,32 +39,30 @@ default_instance_type = 'r3.xlarge'
 default_spot_price = '0.10'
 default_worker_instances = '1'
 default_executor_instances = '1'
-default_master_instance_type = 'm3.xlarge'
+default_master_instance_type = ''
 default_driver_heap_size = '12G'
+default_min_root_ebs_size_gb = '30'
 default_region = 'us-east-1'
 default_zone = default_region + 'b'
 default_key_id = 'ignition_key'
 default_key_file = os.path.expanduser('~/.ssh/ignition_key.pem')
-default_ami = None # will be decided based on spark-ec2 list
-default_master_ami = None
+default_ami = 'ami-611e7976'
+default_master_ami = ''
 default_env = 'dev'
 default_spark_version = '2.0.2'
-custom_builds = {
-#    '1.5.1': 'https://s3.amazonaws.com/chaordic-ignition-public/spark-1.5.1-bin-cdh4.7.1.tgz'
-}
-default_spark_repo = 'https://github.com/chaordic/spark'
+default_hdfs_version = '2.7.2'
+default_spark_download_source = 'https://s3.amazonaws.com/chaordic-ignition-public/spark-{v}-bin-hadoop2.7.tgz'
+default_hdfs_download_source = 'https://s3.amazonaws.com/chaordic-ignition-public/hadoop-{v}.tar.gz'
 default_remote_user = 'ec2-user'
+default_installation_user = 'root'
 default_remote_control_dir = '/tmp/Ignition'
 default_collect_results_dir = '/tmp'
 default_user_data = os.path.join(script_path, 'scripts', 'noop')
 default_defaults_filename = 'cluster_defaults.json'
 
-default_spark_ec2_git_repo = 'https://github.com/chaordic/spark-ec2'
-default_spark_ec2_git_branch = 'branch-2.0'
-
 
 master_post_create_commands = [
-    'sudo', 'yum', '-y', 'install', 'tmux'
+    ['sudo', 'yum', '-y', 'install', 'tmux'],
 ]
 
 
@@ -130,20 +127,23 @@ def ssh_call(user, host, key_file, args=(), allocate_terminal=True, get_output=F
     else:
         return logged_call(base)
 
+def ec2_script_base_path():
+    return os.path.join(script_path, 'flintrock')
 
 def chdir_to_ec2_script_and_get_path():
-    ec2_script_base = os.path.join(script_path, 'spark-ec2')
+    ec2_script_base = ec2_script_base_path()
     os.chdir(ec2_script_base)
-    ec2_script_path = os.path.join(ec2_script_base, 'spark_ec2.py')
+    ec2_script_path = os.path.join(ec2_script_base, 'standalone.py')
     return ec2_script_path
 
 
-def call_ec2_script(args, timeout_total_minutes, timeout_inactivity_minutes):
+def call_ec2_script(args, timeout_total_minutes, timeout_inactivity_minutes, stdout=None):
     ec2_script_path = chdir_to_ec2_script_and_get_path()
-    return check_call_with_timeout(['/usr/bin/env', 'python', '-u',
+    return check_call_with_timeout(['/usr/bin/env', 'python3', '-u',
                                     ec2_script_path] + args,
-                                   timeout_total_minutes=timeout_total_minutes,
-                                   timeout_inactivity_minutes=timeout_inactivity_minutes)
+                                    stdout=stdout,
+                                    timeout_total_minutes=timeout_total_minutes,
+                                    timeout_inactivity_minutes=timeout_inactivity_minutes)
 
 
 def cluster_exists(cluster_name, region):
@@ -207,102 +207,103 @@ def launch(cluster_name, slaves,
            tag=[],
            key_id=default_key_id, region=default_region,
            zone=default_zone, instance_type=default_instance_type,
-           ondemand=False, spot_price=default_spot_price, master_spot=False,
+           # TODO: implement it in flintrock
+           ondemand=False,
+           spot_price=default_spot_price,
+           # TODO: implement it in flintrock
+           master_spot=False,
            user_data=default_user_data,
-           security_group = None,
-           vpc = None,
-           vpc_subnet = None,
+           security_group=None,
+           vpc=None,
+           vpc_subnet=None,
+           # TODO: consider implementing in flintrock
            master_instance_type=default_master_instance_type,
-           wait_time='180', hadoop_major_version='2',
-           worker_instances=default_worker_instances,
            executor_instances=default_executor_instances,
+           min_root_ebs_size_gb=default_min_root_ebs_size_gb,
            retries_on_same_cluster=5,
            max_clusters_to_create=5,
            minimum_percentage_healthy_slaves=0.9,
            remote_user=default_remote_user,
+           installation_user=default_installation_user,
            script_timeout_total_minutes=55,
            script_timeout_inactivity_minutes=10,
-           resume=False, just_ignore_existing=False, worker_timeout=240,
-           spark_repo=default_spark_repo,
+           just_ignore_existing=False,
+           spark_download_source=default_spark_download_source,
            spark_version=default_spark_version,
-           spark_ec2_git_repo=default_spark_ec2_git_repo,
-           spark_ec2_git_branch=default_spark_ec2_git_branch,
-           ami=default_ami, master_ami=default_master_ami,
+           hdfs_download_source=default_hdfs_download_source,
+           hdfs_version=default_hdfs_version,
+           ami=default_ami,
+           # TODO: consider implementing in flintrock
+           master_ami=default_master_ami,
            instance_profile_name=None):
+
+    assert not master_instance_type or master_instance_type == instance_type, 'Different master instance type is currently unsupported'
+    assert not master_ami or master_ami == ami, 'Different master ami is currently unsupported'
+    assert not ondemand, 'On demand is unsupported'
+    assert master_spot, 'On demand master is currently unsupported'
 
     all_args = locals()
 
-    if cluster_exists(cluster_name, region=region) and not resume:
+    if cluster_exists(cluster_name, region=region):
         if just_ignore_existing:
             log.info('Cluster exists but that is ok')
             return ''
         else:
-            raise CommandError('Cluster already exists, pick another name or resume the setup using --resume')
+            raise CommandError('Cluster already exists, pick another name')
 
     for j in range(max_clusters_to_create):
         log.info('Creating new cluster {0}, try {1}'.format(cluster_name, j+1))
         success = False
-        resume_param = ['--resume'] if resume else []
 
         auth_params = []
-        if security_group:
-            auth_params.extend([
-                '--authorized-address', '127.0.0.1/32',
-                '--additional-security-group', security_group
-            ])
 
         # '--vpc-id', default_vpc,
         # '--subnet-id', default_vpc_subnet,
         if vpc and vpc_subnet:
             auth_params.extend([
-                '--vpc-id', vpc,
-                '--subnet-id', vpc_subnet,
+                '--ec2-vpc-id', vpc,
+                '--ec2-subnet-id', vpc_subnet,
             ])
 
-        spot_params = ['--spot-price', spot_price] if not ondemand else []
-        master_spot_params = ['--master-spot'] if not ondemand and master_spot else []
+        spot_params = ['--ec2-spot-price', spot_price] if not ondemand else []
+        #master_spot_params = ['--master-spot'] if not ondemand and master_spot else []
 
-        ami_params = ['--ami', ami] if ami else []
-        master_ami_params = ['--master-ami', master_ami] if master_ami else []
+        ami_params = ['--ec2-ami', ami] if ami else []
+        #master_ami_params = ['--master-ami', master_ami] if master_ami else []
 
-        iam_params = ['--instance-profile-name', instance_profile_name] if instance_profile_name else []
-
-        spark_version = custom_builds.get(spark_version, spark_version)
+        iam_params = ['--ec2-instance-profile-name', instance_profile_name] if instance_profile_name else []
 
         for i in range(retries_on_same_cluster):
             log.info('Running script, try %d of %d', i + 1, retries_on_same_cluster)
             try:
-                call_ec2_script(['--identity-file', key_file,
-                                 '--key-pair', key_id,
-                                 '--slaves', slaves,
-                                 '--region', region,
-                                 '--zone', zone,
-                                 '--instance-type', instance_type,
-                                 '--master-instance-type', master_instance_type,
-                                 '--wait', wait_time,
-                                 '--hadoop-major-version', hadoop_major_version,
-                                 '--spark-ec2-git-repo', spark_ec2_git_repo,
-                                 '--spark-ec2-git-branch', spark_ec2_git_branch,
-                                 '--worker-instances', worker_instances,
-                                 '--executor-instances', executor_instances,
-                                 '--master-opts', '-Dspark.worker.timeout={0}'.format(worker_timeout),
-                                 '--spark-git-repo', spark_repo,
-                                 '-v', spark_version,
-                                 '--user-data', user_data,
-                                 'launch', cluster_name] +
+                call_ec2_script(['--debug',
+                                 'launch',
+                                 '--ec2-identity-file', key_file,
+                                 '--ec2-key-name', key_id,
+                                 '--num-slaves', slaves,
+                                 '--ec2-region', region,
+                                 '--ec2-availability-zone', zone,
+                                 '--ec2-instance-type', instance_type,
+                                 '--ec2-min-root-ebs-size-gb', min_root_ebs_size_gb,
+                                 '--assume-yes',
+                                 '--install-spark',
+                                 '--install-hdfs',
+                                 '--spark-version', spark_version,
+                                 '--hdfs-version', hdfs_version,
+                                 '--spark-download-source', spark_download_source,
+                                 '--hdfs-download-source', hdfs_download_source,
+                                 '--spark-executor-instances', executor_instances,
+                                 '--ec2-security-group', security_group,
+                                 '--ec2-user', installation_user,
+                                 '--ec2-user-data', user_data,
+                                 cluster_name] +
                                 spot_params +
-                                master_spot_params +
-                                resume_param +
                                 auth_params +
                                 ami_params +
-                                master_ami_params +
                                 iam_params,
                                 timeout_total_minutes=script_timeout_total_minutes,
                                 timeout_inactivity_minutes=script_timeout_inactivity_minutes)
                 success = True
-            except subprocess.CalledProcessError as e:
-                resume_param = ['--resume']
-                log.warn('Failed with: %s', e)
             except Exception as e:
                 # Probably a timeout
                 log.exception('Fatal error calling EC2 script')
@@ -318,7 +319,8 @@ def launch(cluster_name, slaves,
                 master = get_master(cluster_name, region=region)
                 save_cluster_args(master, key_file, remote_user, all_args)
                 health_check(cluster_name=cluster_name, key_file=key_file, master=master, remote_user=remote_user, region=region)
-                ssh_call(user=remote_user, host=master, key_file=key_file, args=master_post_create_commands)
+                for command in master_post_create_commands:
+                    ssh_call(user=remote_user, host=master, key_file=key_file, args=command)
                 return master
         except Exception as e:
             log.exception('Got exception on last steps of cluster configuration')
@@ -328,16 +330,22 @@ def launch(cluster_name, slaves,
 
 
 def destroy(cluster_name, delete_groups=False, region=default_region):
-    delete_sg_param = ['--delete-groups'] if delete_groups else []
+    assert not delete_groups, 'Delete groups is deprecated and unsupported'
+    masters, slaves = get_active_nodes(cluster_name, region=region)
 
-    ec2_script_path = chdir_to_ec2_script_and_get_path()
-    p = subprocess.Popen(['/usr/bin/env', 'python', '-u',
-                          ec2_script_path,
-                          'destroy', cluster_name,
-                          '--region', region] + delete_sg_param,
-                         stdin=subprocess.PIPE,
-                         stdout=sys.stdout, universal_newlines=True)
-    p.communicate('y')
+    all_instances = masters + slaves
+    if all_instances:
+        log.info('The following instances will be terminated:')
+        for i in all_instances:
+            log.info('-> %s' % i.public_dns_name)
+
+        log.info('Terminating master...')
+        for i in masters:
+            i.terminate()
+        log.info('Terminating slaves...')
+        for i in slaves:
+            i.terminate()
+        log.info('Done.')
 
 
 def get_master(cluster_name, region=default_region):
@@ -388,7 +396,6 @@ def job_run(cluster_name, job_name, job_mem,
             remote_control_dir = default_remote_control_dir,
             remote_path=None, master=None,
             disable_assembly_build=False,
-            run_tests=False,
             kill_on_failure=False,
             destroy_cluster=False,
             region=default_region,
@@ -403,7 +410,6 @@ def job_run(cluster_name, job_name, job_mem,
 
     project_path = get_project_path()
     project_name = os.path.basename(project_path)
-    module_name = os.path.basename(get_module_path())
     # Use job user on remote path to avoid too many conflicts for different local users
     remote_path = remote_path or '/home/%s/%s.%s' % (default_remote_user, job_user, project_name)
     remote_hook_local = '{module_path}/remote_hook.sh'.format(module_path=get_module_path())
@@ -517,6 +523,8 @@ def health_check(cluster_name, key_file=default_key_file, master=None, remote_us
             masters, slaves = get_active_nodes(cluster_name, region=region)
             if nslaves == 0 or float(len(slaves)) / nslaves < minimum_percentage_healthy_slaves:
                 raise NotHealthyCluster('Not enough healthy slaves: {0}/{1}'.format(len(slaves), nslaves))
+            if not masters:
+                raise NotHealthyCluster('No master found')
         except NotHealthyCluster, e:
             raise e
         except Exception, e:
@@ -703,7 +711,29 @@ def killall_jobs(cluster_name, key_file=default_key_file,
             done >& /dev/null || true'''.format(remote_control_dir=remote_control_dir)
             ])
 
-
+def check_flintrock_installation():
+    try:
+        with file('/dev/null', 'w') as devnull:
+            call_ec2_script(['--help'], 1 , 1, stdout=devnull)
+    except:
+        setup = os.path.join(ec2_script_base_path(), 'setup.py')
+        if not os.path.exists(setup):
+            log.error('''
+Flintrock is missing (or the wrong version is being used).
+Check if you have checked out the submodule. Try:
+  git submode update --init --recursive
+Or checkout ignition with:
+  git clone --recursive ....
+''')
+        else:
+            log.error('''
+Some dependencies are missing. For an Ubuntu system, try the following:
+sudo apt-get install python3-yaml libyaml-dev python3-pip
+sudo python3 -m pip install -U pip packaging setuptools
+cd {flintrock}
+sudo pip3 install -r requirements/user.pip
+        '''.format(flintrock=ec2_script_base_path()))
+        sys.exit(1)
 
 
 parser = ArghParser()
@@ -712,4 +742,5 @@ parser.add_commands([job_run, job_attach, wait_for_job,
                      kill_job, killall_jobs, collect_job_results], namespace="jobs")
 
 if __name__ == '__main__':
+    check_flintrock_installation()
     parser.dispatch()
